@@ -1,0 +1,73 @@
+# =============================================================================
+# Docker Compose - Production Configuration (for local testing)
+# =============================================================================
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up
+# =============================================================================
+
+version: '3.9'
+
+services:
+  # Backend - Production Build
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: production
+    environment:
+      ENVIRONMENT: production
+      DEBUG: false
+      LOG_LEVEL: INFO
+      LOG_FORMAT: json
+    command: >
+      uvicorn app.main:app 
+      --host 0.0.0.0 
+      --port 8000 
+      --workers 2
+      --loop uvloop
+      --http httptools
+    # Remove volume mounts (no hot-reload)
+    volumes:
+      - storage_data:/app/storage
+
+  # Frontend - Production Build
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: production
+      args:
+        VITE_API_BASE_URL: http://localhost:8000/api/v1
+    ports:
+      - "80:80"
+    # Remove volume mounts
+    volumes: []
+    command: nginx -g "daemon off;"
+
+  # Database - Production-like settings
+  db:
+    command:
+      - postgres
+      - -c
+      - max_connections=100
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - effective_cache_size=1GB
+      - -c
+      - maintenance_work_mem=64MB
+      - -c
+      - checkpoint_completion_target=0.9
+      - -c
+      - wal_buffers=16MB
+      - -c
+      - default_statistics_target=100
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - effective_io_concurrency=200
+      - -c
+      - work_mem=4MB
+      - -c
+      - min_wal_size=1GB
+      - -c
+      - max_wal_size=4GB

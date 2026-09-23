@@ -1,0 +1,37 @@
+# Alembic Database Migrations
+
+## สร้าง Migration ใหม่ (Auto-generate)
+
+```bash
+# ภายใน backend container
+alembic revision --autogenerate -m "description of changes"
+```
+
+## รัน Migrations
+
+```bash
+# Upgrade to latest
+alembic upgrade head
+
+# Upgrade by 1 step
+alembic upgrade +1
+
+# Downgrade by 1 step
+alembic downgrade -1
+
+# Downgrade to base
+alembic downgrade base
+```
+
+## ดู Migration History
+
+```bash
+alembic history
+alembic current
+```
+
+## Tips
+
+1. ตรวจสอบ auto-generated migration ก่อนรัน (อาจต้องปรับแต่ง)
+2. ทดสอบ upgrade และ downgrade ก่อน deploy
+3. Backup database ก่อน run migration ใน production

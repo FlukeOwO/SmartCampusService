@@ -1,0 +1,186 @@
+version: '3.9'
+
+# =============================================================================
+# Smart Campus Service Platform - Docker Compose Configuration
+# =============================================================================
+# Development Environment: รัน Backend, Frontend, และ PostgreSQL บน Localhost
+# Architecture: 3-Tier (Frontend -> Backend -> Database)
+# Cloud-Ready: ออกแบบให้ย้ายไป GCP Cloud Run ได้ทันที
+
+services:
+  # ---------------------------------------------------------------------------
+  # PostgreSQL Database Service
+  # ---------------------------------------------------------------------------
+  db:
+    image: postgres:15-alpine
+    container_name: campus-db
+    restart: unless-stopped
+    
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-campus_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-campus_secure_password_2024}
+      POSTGRES_DB: ${POSTGRES_DB:-smart_campus}
+      # Performance tuning
+      POSTGRES_INITDB_ARGS: "-E UTF8 --locale=en_US.UTF-8"
+    
+    ports:
+      - "5432:5432"
+    
+    volumes:
+      # Persistent data storage
+      - postgres_data:/var/lib/postgresql/data
+      # Custom initialization scripts (optional)
+      - ./backend/scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    
+    networks:
+      - campus-network
+    
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-campus_admin} -d ${POSTGRES_DB:-smart_campus}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # Backend Service (FastAPI)
+  # ---------------------------------------------------------------------------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: development
+      args:
+        PYTHON_VERSION: 3.11
+    
+    container_name: campus-backend
+    restart: unless-stopped
+    
+    environment:
+      # Application
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      DEBUG: ${DEBUG:-true}
+      
+      # Database (ใช้ service name 'db' เป็น hostname)
+      POSTGRES_SERVER: db
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-campus_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-campus_secure_password_2024}
+      POSTGRES_DB: ${POSTGRES_DB:-smart_campus}
+      
+      # Security
+      SECRET_KEY: ${SECRET_KEY:-your-super-secret-jwt-key-change-this-in-production}
+      ALGORITHM: ${ALGORITHM:-HS256}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      
+      # Storage (Local for development)
+      STORAGE_PROVIDER: ${STORAGE_PROVIDER:-local}
+      LOCAL_STORAGE_PATH: /app/storage
+      MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-10}
+      
+      # CORS
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:5173}
+      
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    
+    ports:
+      - "8000:8000"
+    
+    volumes:
+      # Hot-reload สำหรับ development
+      - ./backend/app:/app/app:ro
+      # Storage volume สำหรับ uploaded files
+      - storage_data:/app/storage
+      # Alembic migrations
+      - ./backend/alembic:/app/alembic:ro
+    
+    networks:
+      - campus-network
+    
+    depends_on:
+      db:
+        condition: service_healthy
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    command: >
+      sh -c "
+        echo 'Waiting for database...' &&
+        sleep 5 &&
+        echo 'Running database migrations...' &&
+        alembic upgrade head &&
+        echo 'Starting FastAPI server...' &&
+        uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+      "
+
+  # ---------------------------------------------------------------------------
+  # Frontend Service (React + Vite)
+  # ---------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: development
+      args:
+        NODE_VERSION: 18
+    
+    container_name: campus-frontend
+    restart: unless-stopped
+    
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000/api/v1}
+      VITE_APP_NAME: ${VITE_APP_NAME:-Smart Campus Service}
+    
+    ports:
+      - "5173:5173"
+    
+    volumes:
+      # Hot-reload สำหรับ development
+      - ./frontend/src:/app/src:ro
+      - ./frontend/public:/app/public:ro
+      - ./frontend/index.html:/app/index.html:ro
+      - ./frontend/vite.config.js:/app/vite.config.js:ro
+      # Node modules (named volume เพื่อความเร็ว)
+      - frontend_node_modules:/app/node_modules
+    
+    networks:
+      - campus-network
+    
+    depends_on:
+      - backend
+    
+    command: npm run dev -- --host 0.0.0.0
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  campus-network:
+    driver: bridge
+    name: campus-network
+
+# =============================================================================
+# Volumes (Persistent Data)
+# =============================================================================
+volumes:
+  # PostgreSQL data persistence
+  postgres_data:
+    driver: local
+    name: campus-postgres-data
+  
+  # Uploaded files storage (Local development)
+  # ใน Production จะใช้ GCS แทน
+  storage_data:
+    driver: local
+    name: campus-storage-data
+  
+  # Frontend node_modules (เพิ่มความเร็วในการ build)
+  frontend_node_modules:
+    driver: local
+    name: campus-frontend-node-modules
