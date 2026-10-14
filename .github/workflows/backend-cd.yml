@@ -23,6 +23,8 @@ concurrency:
 
 jobs:
   deploy:
+    # workflow_dispatch จาก branch อื่นต้องไม่ถูก deploy ไป dev
+    if: github.ref_name == 'main' || github.ref_name == 'dev'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}

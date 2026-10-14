@@ -125,6 +125,25 @@ async def test_inventory_crud_requires_staff(client, student, staff):
     assert deleted.status_code == 204
 
 
+async def test_cannot_delete_room_with_booking_history(client, student, staff, room):
+    from datetime import UTC, datetime, timedelta
+
+    start = datetime.now(UTC) + timedelta(days=1)
+    booked = await client.post(
+        f"{API}/bookings/rooms",
+        headers=auth(student),
+        json={
+            "room_id": room.id,
+            "title": "x",
+            "start_time": start.isoformat(),
+            "end_time": (start + timedelta(hours=1)).isoformat(),
+        },
+    )
+    assert booked.status_code == 201
+    resp = await client.delete(f"{API}/inventory/rooms/{room.id}", headers=auth(staff))
+    assert resp.status_code == 409
+
+
 async def test_notifications_are_private(client, student, student2, room):
     await create_request(client, student)
     notes = await client.get(f"{API}/notifications", headers=auth(student))

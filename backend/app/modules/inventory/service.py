@@ -2,7 +2,6 @@
 Inventory service - ห้อง (Room) และอุปกรณ์ (Equipment)
 """
 
-from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import func, select
@@ -10,7 +9,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.base_models import PageParams
-from app.common.constants import ACTIVE_BOOKING_STATUSES
 from app.common.exceptions import ConflictException, NotFoundException
 from app.models import Booking, Equipment, Room
 from app.schemas.equipment import EquipmentCreate, EquipmentUpdate
@@ -41,21 +39,14 @@ class InventoryService:
         await self.db.refresh(obj)
         return obj
 
-    async def _ensure_no_active_bookings(self, column, resource_id: int) -> None:
-        has_active = await self.db.scalar(
-            select(
-                select(Booking.id)
-                .where(
-                    column == resource_id,
-                    Booking.status.in_(ACTIVE_BOOKING_STATUSES),
-                    Booking.end_time > datetime.now(UTC),
-                )
-                .exists()
-            )
+    async def _ensure_no_bookings(self, column, resource_id: int) -> None:
+        # ลบแล้วประวัติการจองจะหายตาม (cascade) จึงยอมลบเฉพาะที่ไม่เคยถูกจอง
+        has_bookings = await self.db.scalar(
+            select(select(Booking.id).where(column == resource_id).exists())
         )
-        if has_active:
+        if has_bookings:
             raise ConflictException(
-                "Resource has upcoming bookings; cancel them or mark it unavailable instead"
+                "Resource has booking history; set status or is_bookable=false instead"
             )
 
     # ------------------------------------------------------------------ rooms
@@ -104,7 +95,7 @@ class InventoryService:
 
     async def delete_room(self, room_id: int) -> None:
         room = await self.get_room(room_id)
-        await self._ensure_no_active_bookings(Booking.room_id, room_id)
+        await self._ensure_no_bookings(Booking.room_id, room_id)
         await self.db.delete(room)
         await self.db.commit()
 
@@ -150,6 +141,6 @@ class InventoryService:
 
     async def delete_equipment(self, equipment_id: int) -> None:
         equipment = await self.get_equipment(equipment_id)
-        await self._ensure_no_active_bookings(Booking.equipment_id, equipment_id)
+        await self._ensure_no_bookings(Booking.equipment_id, equipment_id)
         await self.db.delete(equipment)
         await self.db.commit()

@@ -143,7 +143,11 @@ env_setup() {
   if ! exists gcloud secrets describe "$SECRET_DB"; then
     local db_pass
     db_pass=$(openssl rand -base64 24 | tr -d '/+=')
-    gcloud sql users create "$DB_USER" --instance="$SQL_INSTANCE" --password="$db_pass"
+    if gcloud sql users list --instance="$SQL_INSTANCE" --format='value(name)' | grep -qx "$DB_USER"; then
+      gcloud sql users set-password "$DB_USER" --instance="$SQL_INSTANCE" --password="$db_pass"
+    else
+      gcloud sql users create "$DB_USER" --instance="$SQL_INSTANCE" --password="$db_pass"
+    fi
     printf '%s' "$db_pass" | gcloud secrets create "$SECRET_DB" --data-file=- \
       --replication-policy=user-managed --locations="$REGION"
     unset db_pass
@@ -195,8 +199,9 @@ env_setup() {
   local net=(--network="$VPC" --subnet="$SUBNET" --vpc-egress=private-ranges-only)
 
   log "[$env] Migration job $MIGRATE_JOB"
+  # รันซ้ำ: อัปเดตแค่ config ไม่แตะ image (ไม่งั้นจะย้อนกลับไปใช้ :init ที่ไม่รู้จัก migration ใหม่)
   if exists gcloud run jobs describe "$MIGRATE_JOB" --region="$REGION"; then
-    gcloud run jobs update "$MIGRATE_JOB" --region="$REGION" --image="$image" \
+    gcloud run jobs update "$MIGRATE_JOB" --region="$REGION" \
       --set-env-vars="$envs" --set-secrets="$secrets"
   else
     gcloud run jobs create "$MIGRATE_JOB" --region="$REGION" --image="$image" \
@@ -213,11 +218,16 @@ env_setup() {
   fi
 
   log "[$env] Cloud Run service $SERVICE"
-  gcloud run deploy "$SERVICE" --region="$REGION" --image="$image" \
-    --service-account="$API_SA" "${net[@]}" \
-    --set-env-vars="$envs" --set-secrets="$secrets" \
-    --cpu=1 --memory=512Mi --min-instances=0 --max-instances="$MAX_INSTANCES" \
-    --concurrency=80 --cpu-throttling --allow-unauthenticated
+  local svc_flags=(--region="$REGION" --service-account="$API_SA" "${net[@]}"
+    --set-env-vars="$envs" --set-secrets="$secrets"
+    --cpu=1 --memory=512Mi --min-instances=0 --max-instances="$MAX_INSTANCES"
+    --concurrency=80 --cpu-throttling)
+  if exists gcloud run services describe "$SERVICE" --region="$REGION"; then
+    # รันซ้ำ: คง image ที่ CD deploy ไว้
+    gcloud run services update "$SERVICE" "${svc_flags[@]}"
+  else
+    gcloud run deploy "$SERVICE" --image="$image" "${svc_flags[@]}" --allow-unauthenticated
+  fi
   echo "ตั้ง startup probe: Console > Cloud Run > $SERVICE > Edit > Health checks > HTTP GET /healthz"
 
   log "[$env] GitHub Environment '$env' variables"

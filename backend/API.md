@@ -12,7 +12,7 @@ Base URL: `/api/v1` · Swagger: `/api/v1/docs` (ปิดใน production) · A
   | 401 | ไม่มี token / token หมดอายุ / ใช้ refresh token แทน access token |
   | 403 | role ไม่พอ หรือไม่ใช่เจ้าของข้อมูล |
   | 404 | ไม่พบข้อมูล |
-  | 409 | จองซ้อน, อีเมล/รหัสซ้ำ, ลบทรัพยากรที่ยังมีการจองค้าง |
+  | 409 | จองซ้อน, อีเมล/รหัสซ้ำ, ลบห้อง/อุปกรณ์ที่มีประวัติการจอง |
   | 413 | ไฟล์ใหญ่เกิน 10 MB |
   | 422 | รูปแบบข้อมูลผิด (Pydantic) |
   | 429 | login เกิน 5 ครั้ง/นาที/IP |
@@ -85,7 +85,7 @@ Base URL: `/api/v1` · Swagger: `/api/v1/docs` (ปิดใน production) · A
 | GET | `/inventory/equipments/{id}` | login |
 | POST / PATCH / DELETE | `/inventory/equipments[/{id}]` | staff |
 
-อุปกรณ์ 1 แถว = 1 ชิ้น · ลบไม่ได้ (409) ถ้ายังมีการจองที่ยังไม่จบ — ให้เปลี่ยน `status`/`is_bookable` แทน
+อุปกรณ์ 1 แถว = 1 ชิ้น · ลบไม่ได้ (409) ถ้าเคยถูกจอง (กันประวัติการจองหาย) — ให้เปลี่ยน `status`/`is_bookable` แทน
 
 ## Notifications — `/notifications` (เห็นเฉพาะของตัวเอง)
 
