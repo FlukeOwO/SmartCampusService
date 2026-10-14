@@ -1,57 +1,53 @@
 """
-Custom Exceptions - Application-specific exceptions
+Application exceptions - Service โยน exception เหล่านี้ แล้ว main.py แปลงเป็น
+JSON รูปแบบเดียวกัน {"message": ..., "details": ...}
 """
 
 from typing import Any
 
 
 class AppException(Exception):
-    """Base exception สำหรับ Application"""
+    status_code: int = 500
+    default_message: str = "Internal server error"
 
-    def __init__(self, message: str, status_code: int = 500, details: Any = None):
-        self.message = message
-        self.status_code = status_code
+    def __init__(self, message: str | None = None, details: Any = None):
+        self.message = message or self.default_message
         self.details = details
         super().__init__(self.message)
 
 
+class ValidationException(AppException):
+    """กฎธุรกิจไม่ผ่าน เช่น จองย้อนหลัง ห้องปิดซ่อม"""
+
+    status_code = 400
+    default_message = "Business rule validation failed"
+
+
 class AuthenticationException(AppException):
-    """Authentication failed"""
-
-    def __init__(self, message: str = "Authentication failed"):
-        super().__init__(message, status_code=401)
+    status_code = 401
+    default_message = "Authentication failed"
 
 
-class AuthorizationException(AppException):
-    """Insufficient permissions"""
-
-    def __init__(self, message: str = "Insufficient permissions"):
-        super().__init__(message, status_code=403)
+class ForbiddenException(AppException):
+    status_code = 403
+    default_message = "You do not have permission to perform this action"
 
 
 class NotFoundException(AppException):
-    """Resource not found"""
-
-    def __init__(self, message: str = "Resource not found"):
-        super().__init__(message, status_code=404)
+    status_code = 404
+    default_message = "Resource not found"
 
 
 class ConflictException(AppException):
-    """Resource conflict (e.g., duplicate booking)"""
-
-    def __init__(self, message: str = "Resource conflict"):
-        super().__init__(message, status_code=409)
+    status_code = 409
+    default_message = "Resource conflict"
 
 
-class ValidationException(AppException):
-    """Validation error"""
-
-    def __init__(self, message: str = "Validation error", details: Any = None):
-        super().__init__(message, status_code=422, details=details)
+class PayloadTooLargeException(AppException):
+    status_code = 413
+    default_message = "File is too large"
 
 
 class StorageException(AppException):
-    """Storage operation failed"""
-
-    def __init__(self, message: str = "Storage operation failed"):
-        super().__init__(message, status_code=500)
+    status_code = 502
+    default_message = "Storage operation failed"

@@ -18,13 +18,10 @@ services:
       DEBUG: false
       LOG_LEVEL: INFO
       LOG_FORMAT: json
-    command: >
-      uvicorn app.main:app 
-      --host 0.0.0.0 
-      --port 8000 
-      --workers 2
-      --loop uvloop
-      --http httptools
+      PORT: 8000
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
     # Remove volume mounts (no hot-reload)
     volumes:
       - storage_data:/app/storage

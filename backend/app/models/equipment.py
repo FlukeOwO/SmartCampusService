@@ -13,7 +13,7 @@ from app.core.database import Base
 class Equipment(Base, TimestampMixin):
     """
     Equipment Model - เก็บข้อมูลอุปกรณ์
-    
+
     Relationships:
         - bookings: การจองอุปกรณ์
     """
@@ -36,20 +36,14 @@ class Equipment(Base, TimestampMixin):
         index=True,
         comment="ประเภทอุปกรณ์: projector, laptop, camera, etc.",
     )
-    brand: Mapped[str | None] = mapped_column(
-        String(100), nullable=True, comment="ยี่ห้อ"
-    )
-    model: Mapped[str | None] = mapped_column(
-        String(100), nullable=True, comment="รุ่น"
-    )
+    brand: Mapped[str | None] = mapped_column(String(100), nullable=True, comment="ยี่ห้อ")
+    model: Mapped[str | None] = mapped_column(String(100), nullable=True, comment="รุ่น")
     serial_number: Mapped[str | None] = mapped_column(
         String(100), unique=True, nullable=True, comment="Serial Number"
     )
 
     # Details
-    description: Mapped[str | None] = mapped_column(
-        Text, nullable=True, comment="รายละเอียดอุปกรณ์"
-    )
+    description: Mapped[str | None] = mapped_column(Text, nullable=True, comment="รายละเอียดอุปกรณ์")
     specifications: Mapped[str | None] = mapped_column(
         Text, nullable=True, comment="สเปค (JSON object)"
     )

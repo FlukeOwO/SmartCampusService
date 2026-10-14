@@ -1,389 +1,110 @@
-# Smart Campus Service Platform - API Documentation
-
-## 🚀 Quick Start
-
-### Access API Documentation
-
-```
-# Development
-http://localhost:8000/api/v1/docs        # Swagger UI
-http://localhost:8000/api/v1/redoc       # ReDoc
-
-# Production
-https://your-domain.com/api/v1/docs
-```
-
----
-
-## 🔐 Authentication
-
-ระบบใช้ JWT (JSON Web Token) สำหรับการ Authentication
-
-### Flow
-
-1. **Register** หรือ **Login** เพื่อรับ `access_token` และ `refresh_token`
-2. ใช้ `access_token` ใน Authorization Header สำหรับทุก protected endpoints
-3. เมื่อ `access_token` หมดอายุ (30 นาที) ใช้ `refresh_token` เพื่อขอ token ใหม่
-
-### Headers Format
-
-```http
-Authorization: Bearer <access_token>
-Content-Type: application/json
-```
-
----
-
-## 📋 API Endpoints
-
-### Authentication (`/api/v1/auth`)
-
-#### POST `/auth/register`
-ลงทะเบียนผู้ใช้ใหม่
-
-**Request Body:**
-```json
-{
-  "email": "student@example.com",
-  "password": "password123",
-  "full_name": "นักศึกษาทดสอบ",
-  "student_id": "STD2024001",
-  "phone_number": "0812345678",
-  "department": "Computer Science",
-  "role": "student"
-}
-```
-
-**Response:** `201 Created`
-```json
-{
-  "id": 1,
-  "email": "student@example.com",
-  "full_name": "นักศึกษาทดสอบ",
-  "role": "student",
-  "is_active": true,
-  "created_at": "2024-01-01T00:00:00Z"
-}
-```
-
-#### POST `/auth/login`
-เข้าสู่ระบบ
-
-**Request Body:**
-```json
-{
-  "email": "student@example.com",
-  "password": "password123"
-}
-```
-
-**Response:** `200 OK`
-```json
-{
-  "access_token": "eyJ0eXAiOiJKV1QiLCJhbGc...",
-  "refresh_token": "eyJ0eXAiOiJKV1QiLCJhbGc...",
-  "token_type": "bearer",
-  "user": {
-    "id": 1,
-    "email": "student@example.com",
-    "full_name": "นักศึกษาทดสอบ",
-    "role": "student"
-  }
-}
-```
-
-#### POST `/auth/refresh`
-ขอ Access Token ใหม่
-
-**Request Body:**
-```json
-{
-  "refresh_token": "eyJ0eXAiOiJKV1QiLCJhbGc..."
-}
-```
-
-#### GET `/auth/me`
-ดูข้อมูลโปรไฟล์ของตัวเอง
-
-**Headers:** `Authorization: Bearer <token>`
-
-**Response:** `200 OK`
-```json
-{
-  "id": 1,
-  "email": "student@example.com",
-  "full_name": "นักศึกษาทดสอบ",
-  "student_id": "STD2024001",
-  "role": "student",
-  "department": "Computer Science",
-  "phone_number": "0812345678"
-}
-```
-
----
-
-### Bookings (`/api/v1/bookings`)
-
-#### POST `/bookings/rooms`
-จองห้อง
-
-**Headers:** `Authorization: Bearer <token>`
-
-**Request Body:**
-```json
-{
-  "room_id": 1,
-  "title": "ประชุมกลุ่มโปรเจค",
-  "description": "ประชุมทำโปรเจควิชา Software Engineering",
-  "purpose": "Group Study",
-  "start_time": "2024-01-15T09:00:00Z",
-  "end_time": "2024-01-15T11:00:00Z",
-  "attendees_count": 5,
-  "contact_person": "นักศึกษาทดสอบ",
-  "contact_phone": "0812345678"
-}
-```
-
-**Response:** `201 Created`
-```json
-{
-  "id": 1,
-  "user_id": 1,
-  "room_id": 1,
-  "title": "ประชุมกลุ่มโปรเจค",
-  "status": "pending",
-  "start_time": "2024-01-15T09:00:00Z",
-  "end_time": "2024-01-15T11:00:00Z",
-  "created_at": "2024-01-01T00:00:00Z"
-}
-```
-
-**Error Responses:**
-- `400` - Validation error (เช่น end_time <= start_time)
-- `404` - Room not found
-- `409` - Conflict (ห้องถูกจองแล้วในช่วงเวลานั้น)
-
-#### POST `/bookings/equipments`
-จองอุปกรณ์
-
-#### GET `/bookings/me`
-ดูรายการการจองของตัวเอง
-
-**Query Parameters:**
-- `status`: กรองตามสถานะ (pending, confirmed, cancelled, etc.)
-- `limit`: จำนวนรายการสูงสุด (default: 50)
-- `offset`: เริ่มต้นจากรายการที่ (default: 0)
-
-#### GET `/bookings/{booking_id}`
-ดูรายละเอียดการจอง
-
-#### PUT `/bookings/{booking_id}/approve`
-อนุมัติการจอง (Staff/Admin only)
-
-**Headers:** `Authorization: Bearer <token>` (Staff/Admin)
-
-**Request Body:**
-```json
-{
-  "notes": "อนุมัติแล้ว"
-}
-```
-
-#### PUT `/bookings/{booking_id}/reject`
-ปฏิเสธการจอง (Staff/Admin only)
-
-**Request Body:**
-```json
-{
-  "rejection_reason": "ห้องไม่พร้อมใช้งานในวันดังกล่าว"
-}
-```
-
-#### PUT `/bookings/{booking_id}/cancel`
-ยกเลิกการจอง (เจ้าของการจอง)
-
-**Request Body:**
-```json
-{
-  "cancellation_reason": "เปลี่ยนแผนการประชุม"
-}
-```
-
-#### GET `/bookings/rooms/{room_id}/availability`
-ตรวจสอบความว่างของห้อง
-
-**Query Parameters:**
-- `start_time`: เวลาเริ่มต้น (ISO 8601 format)
-- `end_time`: เวลาสิ้นสุด (ISO 8601 format)
-
-**Example:**
-```
-GET /api/v1/bookings/rooms/1/availability?start_time=2024-01-15T09:00:00Z&end_time=2024-01-15T11:00:00Z
-```
-
-**Response:**
-```json
-{
-  "available": true,
-  "room_id": 1,
-  "time_slot": {
-    "start_time": "2024-01-15T09:00:00Z",
-    "end_time": "2024-01-15T11:00:00Z"
-  }
-}
-```
-
-#### GET `/bookings/equipments/{equipment_id}/availability`
-ตรวจสอบความว่างของอุปกรณ์
-
----
-
-### Inventory (`/api/v1/inventory`)
-
-#### GET `/inventory/rooms`
-ดูรายการห้องทั้งหมด
-
-**Query Parameters:**
-- `building`: ชื่ออาคาร
-- `room_type`: ประเภทห้อง (classroom, meeting_room, laboratory, etc.)
-- `status`: สถานะ (available, in_use, maintenance, closed)
-- `is_bookable`: สามารถจองได้หรือไม่ (true/false)
-- `limit`: จำนวนรายการสูงสุด
-- `offset`: เริ่มต้นจากรายการที่
-
-**Example:**
-```
-GET /api/v1/inventory/rooms?building=อาคาร A&room_type=classroom&is_bookable=true
-```
-
-#### GET `/inventory/rooms/{room_id}`
-ดูรายละเอียดห้อง
-
-**Response:**
-```json
-{
-  "id": 1,
-  "room_number": "A101",
-  "room_name": "ห้องเรียนมาตรฐาน A101",
-  "room_type": "classroom",
-  "building": "อาคาร A",
-  "floor": 1,
-  "capacity": 40,
-  "description": "ห้องเรียนขนาดกลาง มีเครื่องฉายโปรเจคเตอร์",
-  "facilities": ["Projector", "Whiteboard", "Air Conditioner", "WiFi"],
-  "status": "available",
-  "is_bookable": true
-}
-```
-
-#### GET `/inventory/equipments`
-ดูรายการอุปกรณ์ทั้งหมด
-
-**Query Parameters:**
-- `equipment_type`: ประเภทอุปกรณ์
-- `status`: สถานะ (available, in_use, maintenance, broken, retired)
-- `is_bookable`: สามารถจองได้หรือไม่
-- `limit`: จำนวนรายการสูงสุด
-- `offset`: เริ่มต้นจากรายการที่
-
-#### GET `/inventory/equipments/{equipment_id}`
-ดูรายละเอียดอุปกรณ์
-
----
-
-## 🔑 Role-Based Access Control (RBAC)
-
-### Roles
-
-- **student**: นักศึกษา - สามารถจองห้องและอุปกรณ์
-- **staff**: เจ้าหน้าที่ - สามารถอนุมัติ/ปฏิเสธการจอง
-- **admin**: ผู้ดูแลระบบ - สิทธิ์เต็ม
-
-### Permission Matrix
-
-| Endpoint | Student | Staff | Admin |
-|----------|---------|-------|-------|
-| Register/Login | ✅ | ✅ | ✅ |
-| View Rooms/Equipments | ✅ | ✅ | ✅ |
-| Create Booking | ✅ | ✅ | ✅ |
-| View Own Bookings | ✅ | ✅ | ✅ |
-| View All Bookings | ❌ | ✅ | ✅ |
-| Approve/Reject | ❌ | ✅ | ✅ |
-| Cancel Own Booking | ✅ | ✅ | ✅ |
-| Manage Inventory | ❌ | ❌ | ✅ |
-
----
-
-## 📊 Status Codes
-
-| Code | Meaning |
-|------|---------|
-| 200 | OK - Request successful |
-| 201 | Created - Resource created successfully |
-| 204 | No Content - Success with no response body |
-| 400 | Bad Request - Invalid request data |
-| 401 | Unauthorized - Missing or invalid token |
-| 403 | Forbidden - Insufficient permissions |
-| 404 | Not Found - Resource not found |
-| 409 | Conflict - Resource conflict (e.g., double booking) |
-| 422 | Unprocessable Entity - Validation error |
-| 500 | Internal Server Error |
-
----
-
-## 🧪 Testing with cURL
-
-### Register
-```bash
-curl -X POST http://localhost:8000/api/v1/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "test@example.com",
-    "password": "password123",
-    "full_name": "Test User",
-    "role": "student"
-  }'
-```
-
-### Login
-```bash
-curl -X POST http://localhost:8000/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "test@example.com",
-    "password": "password123"
-  }'
-```
-
-### Create Booking (with token)
-```bash
-curl -X POST http://localhost:8000/api/v1/bookings/rooms \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "room_id": 1,
-    "title": "Meeting",
-    "start_time": "2024-01-15T09:00:00Z",
-    "end_time": "2024-01-15T11:00:00Z"
-  }'
-```
-
----
-
-## 🔒 Security Best Practices
-
-1. ✅ ใช้ HTTPS ใน Production
-2. ✅ เก็บ tokens อย่างปลอดภัย (ไม่ใช่ localStorage)
-3. ✅ ตรวจสอบ token expiration
-4. ✅ ใช้ refresh token สำหรับ long-lived sessions
-5. ✅ Implement rate limiting (60 requests/minute)
-6. ✅ Validate input data
-7. ✅ Handle errors properly
-
----
-
-## 📚 Additional Resources
-
-- [FastAPI Documentation](https://fastapi.tiangolo.com)
-- [JWT.io](https://jwt.io)
-- [HTTP Status Codes](https://httpstatuses.com)
+# Smart Campus API (v1)
+
+Base URL: `/api/v1` · Swagger: `/api/v1/docs` (ปิดใน production) · Auth: `Authorization: Bearer <access_token>`
+
+## Conventions
+
+- **Error** ทุกชนิดตอบรูปแบบเดียว: `{"message": "...", "details": ...}`
+
+  | Status | ใช้เมื่อ |
+  |---|---|
+  | 400 | กฎธุรกิจไม่ผ่าน เช่น จองย้อนหลัง, ห้องปิดซ่อม, เปลี่ยนสถานะผิดลำดับ |
+  | 401 | ไม่มี token / token หมดอายุ / ใช้ refresh token แทน access token |
+  | 403 | role ไม่พอ หรือไม่ใช่เจ้าของข้อมูล |
+  | 404 | ไม่พบข้อมูล |
+  | 409 | จองซ้อน, อีเมล/รหัสซ้ำ, ลบห้อง/อุปกรณ์ที่มีประวัติการจอง |
+  | 413 | ไฟล์ใหญ่เกิน 10 MB |
+  | 422 | รูปแบบข้อมูลผิด (Pydantic) |
+  | 429 | login เกิน 5 ครั้ง/นาที/IP |
+
+- **List** ทุกตัวรับ `?page=1&page_size=20` (สูงสุด 100) และตอบ `{"items": [...], "total", "page", "page_size"}`
+- **เวลา** ต้องเป็น ISO 8601 ที่มี timezone เช่น `2026-10-20T09:00:00+07:00` (ไม่มี offset → 422) และระบบตอบกลับเป็น UTC
+- **Role**: `student` < `staff` < `admin`
+
+## Auth — `/auth`
+
+| Method | Path | ใคร | หมายเหตุ |
+|---|---|---|---|
+| POST | `/auth/register` | สาธารณะ | ได้ role `student` เสมอ (role ที่ส่งมาถูกเพิกเฉย) |
+| POST | `/auth/login` | สาธารณะ | `{email, password}` → `access_token` (30 นาที), `refresh_token` (7 วัน), `user` |
+| POST | `/auth/refresh` | สาธารณะ | `{refresh_token}` → `access_token` ใหม่ |
+| GET / PUT | `/auth/me` | login | ดู/แก้โปรไฟล์ |
+| PUT | `/auth/me/password` | login | `{current_password, new_password}` |
+| GET | `/auth/users?role=` | admin | รายชื่อผู้ใช้ |
+| POST | `/auth/users` | admin | สร้างบัญชี staff/admin (`role`) |
+| PATCH | `/auth/users/{id}` | admin | `{role?, is_active?}` |
+
+## Requests (คำร้อง/แจ้งปัญหา) — `/requests`
+
+| Method | Path | ใคร | หมายเหตุ |
+|---|---|---|---|
+| POST | `/requests` | login | `multipart/form-data`: `title`, `description`, `request_type`, `priority`, `location`, `contact_phone`, `files[]` (≤5 ไฟล์) |
+| GET | `/requests/me?status=` | login | คำร้องของตัวเอง |
+| GET | `/requests?status=&request_type=&priority=&assigned_staff_id=&search=` | staff | ทั้งหมด |
+| GET | `/requests/{id}` | เจ้าของ / staff | รวม `attachments` |
+| PATCH | `/requests/{id}` | เจ้าของ | แก้ได้ขณะ `pending` |
+| POST | `/requests/{id}/cancel` | เจ้าของ | เฉพาะ `pending` |
+| POST | `/requests/{id}/feedback` | เจ้าของ | `{rating 1-5, feedback}` หลัง `completed` |
+| PATCH | `/requests/{id}/status` | staff | `pending → in_progress/rejected`, `in_progress → completed/rejected` (`rejected` ต้องมี `rejection_reason`) |
+| PATCH | `/requests/{id}/assign` | staff | `{assigned_staff_id}` ต้องเป็น staff/admin ที่ active |
+| POST | `/requests/{id}/attachments` | เจ้าของ | `files[]` |
+| GET | `/requests/{id}/attachments/{aid}/url` | เจ้าของ / staff | `{url, expires_in_seconds}` — Signed URL อายุ 15 นาที |
+
+ไฟล์ที่รับ: `.jpg .jpeg .png .gif .webp .pdf .docx .xlsx` ≤ 10 MB และเนื้อไฟล์ต้องตรงกับนามสกุล (ตรวจ magic bytes)
+
+## Bookings — `/bookings`
+
+| Method | Path | ใคร | หมายเหตุ |
+|---|---|---|---|
+| POST | `/bookings/rooms` | login | `{room_id, title, start_time, end_time, attendees_count?, ...}` → `pending` |
+| POST | `/bookings/equipments` | login | `{equipment_id, title, start_time, end_time, ...}` |
+| GET | `/bookings/me?status=` | login | การจองของตัวเอง |
+| GET | `/bookings?status=&room_id=&equipment_id=&start_from=&start_to=` | staff | ทั้งหมด (เช่น `?status=pending` = คิวรออนุมัติ) |
+| GET | `/bookings/rooms/{id}/availability?start_time=&end_time=` | login | `{available, busy_slots[]}` |
+| GET | `/bookings/equipments/{id}/availability?start_time=&end_time=` | login | |
+| GET | `/bookings/{id}` | เจ้าของ / staff | |
+| PUT | `/bookings/{id}/approve` | staff | `pending → confirmed` |
+| PUT | `/bookings/{id}/reject` | staff | `{rejection_reason}` |
+| PUT | `/bookings/{id}/cancel` | เจ้าของ (ก่อนเริ่ม) / staff | `{cancellation_reason}` |
+
+กฎการจอง: `start < end`, ไม่ย้อนหลัง, ยาว 15 นาที–24 ชั่วโมง (อุปกรณ์ ≤ 7 วัน), ล่วงหน้าไม่เกิน 90 วัน,
+ห้อง/อุปกรณ์ต้อง `available` + `is_bookable`, `attendees_count` ≤ ความจุห้อง
+
+**กันจองซ้อน 2 ชั้น**: (1) `SELECT ... FOR UPDATE` ล็อกแถวห้อง/อุปกรณ์แล้วตรวจช่วงเวลาที่ทับกับการจอง
+`pending`/`confirmed` (2) exclusion constraint `no_overlap_room` / `no_overlap_equipment` ใน PostgreSQL —
+ทั้งสองชั้นตอบ `409` · ช่วงเวลาแบบ `[start, end)` จึงจองต่อกันพอดีได้
+
+## Inventory — `/inventory`
+
+| Method | Path | ใคร |
+|---|---|---|
+| GET | `/inventory/rooms?building=&room_type=&status=&bookable=&min_capacity=&search=` | login |
+| GET | `/inventory/rooms/{id}` | login |
+| POST / PATCH / DELETE | `/inventory/rooms[/{id}]` | staff |
+| GET | `/inventory/equipments?equipment_type=&status=&bookable=&search=` | login |
+| GET | `/inventory/equipments/{id}` | login |
+| POST / PATCH / DELETE | `/inventory/equipments[/{id}]` | staff |
+
+อุปกรณ์ 1 แถว = 1 ชิ้น · ลบไม่ได้ (409) ถ้าเคยถูกจอง (กันประวัติการจองหาย) — ให้เปลี่ยน `status`/`is_bookable` แทน
+
+## Notifications — `/notifications` (เห็นเฉพาะของตัวเอง)
+
+| Method | Path | หมายเหตุ |
+|---|---|---|
+| GET | `/notifications?unread_only=` | ใหม่สุดก่อน |
+| GET | `/notifications/stats/summary` | `{total, unread, read}` — Frontend poll ทุก ~30 วินาที |
+| GET | `/notifications/{id}` | |
+| PATCH | `/notifications/{id}/read` | |
+| POST | `/notifications/read/all` | `{updated}` |
+| DELETE | `/notifications/{id}` | |
+| DELETE | `/notifications/read` | ลบที่อ่านแล้วทั้งหมด |
+
+ระบบสร้าง notification อัตโนมัติใน transaction เดียวกับการเปลี่ยนสถานะ: สร้าง/อนุมัติ/ปฏิเสธ/ยกเลิกการจอง,
+สร้างคำร้อง, เปลี่ยนสถานะคำร้อง, มอบหมายงาน (แจ้ง staff ที่ได้รับมอบหมาย)
+
+## Health
+
+| Path | ใช้ทำ |
+|---|---|
+| `GET /healthz` | startup/liveness probe ของ Cloud Run (ไม่แตะ DB) |
+| `GET /readyz` | ตรวจ DB (`503` ถ้าต่อไม่ได้) |

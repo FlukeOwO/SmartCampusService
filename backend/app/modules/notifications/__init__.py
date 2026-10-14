@@ -1,3 +1,1 @@
-"""
-Notification Management Module
-"""
+"""Notifications module - in-app notification"""

@@ -1,89 +1,69 @@
 """
-Application Constants - Enums และค่าคงที่
+Enums และค่าคงที่ของระบบ
 """
 
 from enum import Enum
 
 
-# ============================================================================
-# User Roles
-# ============================================================================
-
-
 class UserRole(str, Enum):
-    """User roles สำหรับ RBAC"""
-
     ADMIN = "admin"
     STAFF = "staff"
     STUDENT = "student"
 
 
-# ============================================================================
-# Request Status
-# ============================================================================
+STAFF_ROLES = {UserRole.STAFF.value, UserRole.ADMIN.value}
 
 
 class RequestStatus(str, Enum):
-    """สถานะของคำร้อง"""
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    REJECTED = "rejected"
+    CANCELLED = "cancelled"
 
-    PENDING = "pending"  # รอดำเนินการ
-    IN_PROGRESS = "in_progress"  # กำลังดำเนินการ
-    COMPLETED = "completed"  # เสร็จสิ้น
-    REJECTED = "rejected"  # ปฏิเสธ
-    CANCELLED = "cancelled"  # ยกเลิก
+
+# สถานะที่เปลี่ยนต่อได้ (staff) - สถานะอื่นถือว่าจบแล้ว
+REQUEST_STATUS_TRANSITIONS: dict[str, set[str]] = {
+    RequestStatus.PENDING.value: {RequestStatus.IN_PROGRESS.value, RequestStatus.REJECTED.value},
+    RequestStatus.IN_PROGRESS.value: {RequestStatus.COMPLETED.value, RequestStatus.REJECTED.value},
+}
 
 
 class RequestType(str, Enum):
-    """ประเภทของคำร้อง"""
-
-    MAINTENANCE = "maintenance"  # แจ้งซ่อม
-    COMPLAINT = "complaint"  # ร้องเรียน
-    INQUIRY = "inquiry"  # สอบถาม
-    OTHER = "other"  # อื่นๆ
+    MAINTENANCE = "maintenance"
+    COMPLAINT = "complaint"
+    INQUIRY = "inquiry"
+    OTHER = "other"
 
 
 class RequestPriority(str, Enum):
-    """ระดับความสำคัญของคำร้อง"""
-
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
     URGENT = "urgent"
 
 
-# ============================================================================
-# Booking Status
-# ============================================================================
-
-
 class BookingStatus(str, Enum):
-    """สถานะการจอง"""
-
-    PENDING = "pending"  # รอการอนุมัติ
-    CONFIRMED = "confirmed"  # ยืนยันแล้ว
-    CANCELLED = "cancelled"  # ยกเลิก
-    COMPLETED = "completed"  # เสร็จสิ้น (หลังจากใช้งานแล้ว)
-    REJECTED = "rejected"  # ปฏิเสธ
+    PENDING = "pending"
+    CONFIRMED = "confirmed"
+    CANCELLED = "cancelled"
+    COMPLETED = "completed"
+    REJECTED = "rejected"
 
 
-# ============================================================================
-# Equipment & Room
-# ============================================================================
+# การจองที่ยัง "ถือ" ช่วงเวลาอยู่ (ใช้ทั้งใน conflict check และ exclusion constraint)
+ACTIVE_BOOKING_STATUSES = (BookingStatus.PENDING.value, BookingStatus.CONFIRMED.value)
 
 
 class EquipmentStatus(str, Enum):
-    """สถานะของอุปกรณ์"""
-
-    AVAILABLE = "available"  # พร้อมใช้งาน
-    IN_USE = "in_use"  # กำลังใช้งาน
-    MAINTENANCE = "maintenance"  # ซ่อมบำรุง
-    BROKEN = "broken"  # ชำรุด
-    RETIRED = "retired"  # ปลดระวาง
+    AVAILABLE = "available"
+    IN_USE = "in_use"
+    MAINTENANCE = "maintenance"
+    BROKEN = "broken"
+    RETIRED = "retired"
 
 
 class RoomStatus(str, Enum):
-    """สถานะของห้อง"""
-
     AVAILABLE = "available"
     IN_USE = "in_use"
     MAINTENANCE = "maintenance"
@@ -91,48 +71,53 @@ class RoomStatus(str, Enum):
 
 
 class RoomType(str, Enum):
-    """ประเภทของห้อง"""
-
-    CLASSROOM = "classroom"  # ห้องเรียน
-    MEETING_ROOM = "meeting_room"  # ห้องประชุม
-    LABORATORY = "laboratory"  # ห้องปฏิบัติการ
-    AUDITORIUM = "auditorium"  # หอประชุม
-    STUDIO = "studio"  # สตูดิโอ
+    CLASSROOM = "classroom"
+    MEETING_ROOM = "meeting_room"
+    LABORATORY = "laboratory"
+    AUDITORIUM = "auditorium"
+    STUDIO = "studio"
     OTHER = "other"
 
 
-# ============================================================================
-# Notification
-# ============================================================================
-
-
 class NotificationType(str, Enum):
-    """ประเภทการแจ้งเตือน"""
-
-    REQUEST_UPDATE = "request_update"  # อัปเดตสถานะคำร้อง
-    BOOKING_CONFIRMED = "booking_confirmed"  # การจองได้รับการยืนยัน
-    BOOKING_CANCELLED = "booking_cancelled"  # การจองถูกยกเลิก
-    BOOKING_REMINDER = "booking_reminder"  # เตือนการจอง
-    SYSTEM_ANNOUNCEMENT = "system_announcement"  # ประกาศระบบ
-
-
-# ============================================================================
-# File Upload
-# ============================================================================
-
-# Allowed file extensions
-ALLOWED_IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".gif", ".webp"]
-ALLOWED_DOCUMENT_EXTENSIONS = [".pdf", ".doc", ".docx", ".xls", ".xlsx"]
-ALLOWED_EXTENSIONS = ALLOWED_IMAGE_EXTENSIONS + ALLOWED_DOCUMENT_EXTENSIONS
-
-# Max file sizes (MB)
-MAX_IMAGE_SIZE_MB = 5
-MAX_DOCUMENT_SIZE_MB = 10
+    REQUEST_CREATED = "request_created"
+    REQUEST_UPDATE = "request_update"
+    REQUEST_ASSIGNED = "request_assigned"
+    BOOKING_CREATED = "booking_created"
+    BOOKING_CONFIRMED = "booking_confirmed"
+    BOOKING_REJECTED = "booking_rejected"
+    BOOKING_CANCELLED = "booking_cancelled"
+    BOOKING_REMINDER = "booking_reminder"
+    SYSTEM_ANNOUNCEMENT = "system_announcement"
 
 
-# ============================================================================
-# Pagination
-# ============================================================================
+# -----------------------------------------------------------------------------
+# Booking rules
+# -----------------------------------------------------------------------------
+BOOKING_MIN_MINUTES = 15
+ROOM_BOOKING_MAX_HOURS = 24
+EQUIPMENT_BOOKING_MAX_DAYS = 7
+BOOKING_MAX_ADVANCE_DAYS = 90
+
+# -----------------------------------------------------------------------------
+# File upload: นามสกุล -> (MIME type, magic bytes ที่ยอมรับ)
+# -----------------------------------------------------------------------------
+ALLOWED_UPLOADS: dict[str, tuple[str, tuple[bytes, ...]]] = {
+    ".jpg": ("image/jpeg", (b"\xff\xd8\xff",)),
+    ".jpeg": ("image/jpeg", (b"\xff\xd8\xff",)),
+    ".png": ("image/png", (b"\x89PNG\r\n\x1a\n",)),
+    ".gif": ("image/gif", (b"GIF87a", b"GIF89a")),
+    ".webp": ("image/webp", (b"RIFF",)),
+    ".pdf": ("application/pdf", (b"%PDF-",)),
+    ".docx": (
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        (b"PK\x03\x04",),
+    ),
+    ".xlsx": (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        (b"PK\x03\x04",),
+    ),
+}
 
 DEFAULT_PAGE_SIZE = 20
 MAX_PAGE_SIZE = 100

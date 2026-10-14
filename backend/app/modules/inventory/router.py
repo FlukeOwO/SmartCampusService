@@ -1,200 +1,107 @@
 """
-Inventory Router - API Endpoints สำหรับ Rooms และ Equipment
+Inventory router - /api/v1/inventory
+อ่านได้ทุกคน (ต้อง login), สร้าง/แก้/ลบ เฉพาะ staff/admin
 """
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.common.base_models import Page, PageParams
 from app.common.constants import EquipmentStatus, RoomStatus, RoomType
 from app.core.database import get_db
-from app.models import Equipment, Room, User
-from app.modules.auth.dependencies import get_current_active_user, require_staff
+from app.modules.auth.dependencies import CurrentUser, StaffUser
+from app.modules.inventory.service import InventoryService
+from app.schemas.equipment import EquipmentCreate, EquipmentResponse, EquipmentUpdate
+from app.schemas.room import RoomCreate, RoomResponse, RoomUpdate
 
 router = APIRouter()
+DB = Annotated[AsyncSession, Depends(get_db)]
+Pagination = Annotated[PageParams, Depends()]
 
 
-# =============================================================================
-# Rooms
-# =============================================================================
-
-
-@router.get("/rooms", response_model=list[dict])
+# ---------------------------------------------------------------------- rooms
+@router.get("/rooms", response_model=Page[RoomResponse])
 async def list_rooms(
-    db: Annotated[AsyncSession, Depends(get_db)],
-    building: str | None = Query(None, description="กรองตามอาคาร"),
-    room_type: RoomType | None = Query(None, description="กรองตามประเภทห้อง"),
-    status: RoomStatus | None = Query(None, description="กรองตามสถานะ"),
-    is_bookable: bool | None = Query(None, description="กรองตามความสามารถจอง"),
-    limit: int = Query(50, ge=1, le=100),
-    offset: int = Query(0, ge=0),
+    _: CurrentUser,
+    db: DB,
+    params: Pagination,
+    building: str | None = None,
+    room_type: RoomType | None = None,
+    status_filter: RoomStatus | None = Query(None, alias="status"),
+    bookable: bool | None = None,
+    min_capacity: int | None = Query(None, ge=1),
+    search: str | None = Query(None, max_length=100),
 ):
-    """
-    ดูรายการห้องทั้งหมด
-    
-    Query Parameters:
-        - building: ชื่ออาคาร
-        - room_type: ประเภทห้อง (classroom, meeting_room, laboratory, etc.)
-        - status: สถานะห้อง (available, in_use, maintenance, closed)
-        - is_bookable: สามารถจองได้หรือไม่
-        - limit: จำนวนรายการสูงสุด
-        - offset: เริ่มต้นจากรายการที่
-    """
-    query = select(Room)
-
-    # Filters
-    if building:
-        query = query.where(Room.building == building)
-    if room_type:
-        query = query.where(Room.room_type == room_type.value)
-    if status:
-        query = query.where(Room.status == status.value)
-    if is_bookable is not None:
-        query = query.where(Room.is_bookable == is_bookable)
-
-    query = query.offset(offset).limit(limit)
-
-    result = await db.execute(query)
-    rooms = result.scalars().all()
-
-    return [
-        {
-            "id": room.id,
-            "room_number": room.room_number,
-            "room_name": room.room_name,
-            "room_type": room.room_type,
-            "building": room.building,
-            "floor": room.floor,
-            "capacity": room.capacity,
-            "status": room.status,
-            "is_bookable": room.is_bookable,
-            "image_url": room.image_url,
-        }
-        for room in rooms
-    ]
+    items, total = await InventoryService(db).list_rooms(
+        params,
+        building=building,
+        room_type=room_type.value if room_type else None,
+        status=status_filter.value if status_filter else None,
+        bookable=bookable,
+        min_capacity=min_capacity,
+        search=search,
+    )
+    return Page(items=items, total=total, page=params.page, page_size=params.page_size)
 
 
-@router.get("/rooms/{room_id}", response_model=dict)
-async def get_room(
-    room_id: int,
-    db: Annotated[AsyncSession, Depends(get_db)],
-):
-    """ดูรายละเอียดห้อง"""
-    room = await db.get(Room, room_id)
-    if not room:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Room not found")
-
-    import json
-
-    return {
-        "id": room.id,
-        "room_number": room.room_number,
-        "room_name": room.room_name,
-        "room_type": room.room_type,
-        "building": room.building,
-        "floor": room.floor,
-        "capacity": room.capacity,
-        "description": room.description,
-        "facilities": json.loads(room.facilities) if room.facilities else [],
-        "image_url": room.image_url,
-        "status": room.status,
-        "is_bookable": room.is_bookable,
-        "created_at": room.created_at,
-    }
+@router.get("/rooms/{room_id}", response_model=RoomResponse)
+async def get_room(room_id: int, _: CurrentUser, db: DB):
+    return await InventoryService(db).get_room(room_id)
 
 
-# =============================================================================
-# Equipment
-# =============================================================================
+@router.post("/rooms", response_model=RoomResponse, status_code=status.HTTP_201_CREATED)
+async def create_room(data: RoomCreate, _: StaffUser, db: DB):
+    return await InventoryService(db).create_room(data)
 
 
-@router.get("/equipments", response_model=list[dict])
+@router.patch("/rooms/{room_id}", response_model=RoomResponse)
+async def update_room(room_id: int, data: RoomUpdate, _: StaffUser, db: DB):
+    return await InventoryService(db).update_room(room_id, data)
+
+
+@router.delete("/rooms/{room_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_room(room_id: int, _: StaffUser, db: DB):
+    await InventoryService(db).delete_room(room_id)
+
+
+# ------------------------------------------------------------------ equipment
+@router.get("/equipments", response_model=Page[EquipmentResponse])
 async def list_equipments(
-    db: Annotated[AsyncSession, Depends(get_db)],
-    equipment_type: str | None = Query(None, description="กรองตามประเภทอุปกรณ์"),
-    status: EquipmentStatus | None = Query(None, description="กรองตามสถานะ"),
-    is_bookable: bool | None = Query(None, description="กรองตามความสามารถจอง"),
-    limit: int = Query(50, ge=1, le=100),
-    offset: int = Query(0, ge=0),
+    _: CurrentUser,
+    db: DB,
+    params: Pagination,
+    equipment_type: str | None = None,
+    status_filter: EquipmentStatus | None = Query(None, alias="status"),
+    bookable: bool | None = None,
+    search: str | None = Query(None, max_length=100),
 ):
-    """
-    ดูรายการอุปกรณ์ทั้งหมด
-    
-    Query Parameters:
-        - equipment_type: ประเภทอุปกรณ์ (projector, laptop, camera, etc.)
-        - status: สถานะอุปกรณ์ (available, in_use, maintenance, broken, retired)
-        - is_bookable: สามารถจองได้หรือไม่
-        - limit: จำนวนรายการสูงสุด
-        - offset: เริ่มต้นจากรายการที่
-    """
-    query = select(Equipment)
-
-    # Filters
-    if equipment_type:
-        query = query.where(Equipment.equipment_type == equipment_type)
-    if status:
-        query = query.where(Equipment.status == status.value)
-    if is_bookable is not None:
-        query = query.where(Equipment.is_bookable == is_bookable)
-
-    query = query.offset(offset).limit(limit)
-
-    result = await db.execute(query)
-    equipments = result.scalars().all()
-
-    return [
-        {
-            "id": eq.id,
-            "equipment_code": eq.equipment_code,
-            "equipment_name": eq.equipment_name,
-            "equipment_type": eq.equipment_type,
-            "brand": eq.brand,
-            "model": eq.model,
-            "status": eq.status,
-            "is_bookable": eq.is_bookable,
-            "quantity": eq.quantity,
-            "location": eq.location,
-            "image_url": eq.image_url,
-        }
-        for eq in equipments
-    ]
+    items, total = await InventoryService(db).list_equipments(
+        params,
+        equipment_type=equipment_type,
+        status=status_filter.value if status_filter else None,
+        bookable=bookable,
+        search=search,
+    )
+    return Page(items=items, total=total, page=params.page, page_size=params.page_size)
 
 
-@router.get("/equipments/{equipment_id}", response_model=dict)
-async def get_equipment(
-    equipment_id: int,
-    db: Annotated[AsyncSession, Depends(get_db)],
-):
-    """ดูรายละเอียดอุปกรณ์"""
-    equipment = await db.get(Equipment, equipment_id)
-    if not equipment:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Equipment not found"
-        )
+@router.get("/equipments/{equipment_id}", response_model=EquipmentResponse)
+async def get_equipment(equipment_id: int, _: CurrentUser, db: DB):
+    return await InventoryService(db).get_equipment(equipment_id)
 
-    import json
 
-    return {
-        "id": equipment.id,
-        "equipment_code": equipment.equipment_code,
-        "equipment_name": equipment.equipment_name,
-        "equipment_type": equipment.equipment_type,
-        "brand": equipment.brand,
-        "model": equipment.model,
-        "serial_number": equipment.serial_number,
-        "description": equipment.description,
-        "specifications": (
-            json.loads(equipment.specifications) if equipment.specifications else {}
-        ),
-        "image_url": equipment.image_url,
-        "location": equipment.location,
-        "responsible_staff": equipment.responsible_staff,
-        "status": equipment.status,
-        "is_bookable": equipment.is_bookable,
-        "quantity": equipment.quantity,
-        "last_maintenance_date": equipment.last_maintenance_date,
-        "next_maintenance_date": equipment.next_maintenance_date,
-        "created_at": equipment.created_at,
-    }
+@router.post("/equipments", response_model=EquipmentResponse, status_code=status.HTTP_201_CREATED)
+async def create_equipment(data: EquipmentCreate, _: StaffUser, db: DB):
+    return await InventoryService(db).create_equipment(data)
+
+
+@router.patch("/equipments/{equipment_id}", response_model=EquipmentResponse)
+async def update_equipment(equipment_id: int, data: EquipmentUpdate, _: StaffUser, db: DB):
+    return await InventoryService(db).update_equipment(equipment_id, data)
+
+
+@router.delete("/equipments/{equipment_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_equipment(equipment_id: int, _: StaffUser, db: DB):
+    await InventoryService(db).delete_equipment(equipment_id)

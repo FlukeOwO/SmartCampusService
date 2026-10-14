@@ -1,0 +1,105 @@
+# Deploy backend ไป Cloud Run
+#   push dev  -> GitHub Environment "dev"  -> campus-api-dev
+#   push main -> GitHub Environment "prod" -> campus-api (ตั้ง required reviewer ให้ prod)
+#
+# ขั้นตอน: WIF auth -> build/push image :<git-sha> -> migration job -> deploy revision
+#          แบบยังไม่รับ traffic -> smoke test /healthz บน tag URL -> ย้าย traffic 100%
+# ถ้า migration หรือ smoke test ล้ม pipeline หยุดและ revision เดิมยังรับ traffic อยู่
+name: backend-cd
+
+on:
+  push:
+    branches: [main, dev]
+    paths: ["backend/**", ".github/workflows/backend-cd.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # ให้ GitHub ออก OIDC token สำหรับ Workload Identity Federation
+
+concurrency:
+  group: backend-cd-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # ปิดไว้จนกว่าจะตั้งค่า GCP เสร็จ: ตั้ง repository variable DEPLOY_ENABLED=true เพื่อเปิด
+    # และ workflow_dispatch จาก branch อื่นต้องไม่ถูก deploy ไป dev
+    if: vars.DEPLOY_ENABLED == 'true' && (github.ref_name == 'main' || github.ref_name == 'dev')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
+    env:
+      REGION: ${{ vars.GCP_REGION }}
+      SERVICE: ${{ vars.SERVICE_NAME }}
+      MIGRATE_JOB: ${{ vars.MIGRATE_JOB }}
+      IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/campus/api:${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud (WIF, no JSON key)
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SA }}
+
+      - name: Configure gcloud
+        run: |
+          gcloud config set project "${{ vars.GCP_PROJECT_ID }}"
+          gcloud config set run/region "$REGION"
+          gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
+
+      - name: Build and push image
+        run: |
+          docker build --target production -t "$IMAGE" backend
+          docker push "$IMAGE"
+
+      - name: Run database migration (Cloud Run Job)
+        run: |
+          gcloud run jobs update "$MIGRATE_JOB" --image "$IMAGE"
+          gcloud run jobs execute "$MIGRATE_JOB" --wait
+
+      - name: Deploy new revision without traffic
+        id: deploy
+        run: |
+          TAG="sha-${GITHUB_SHA::7}"
+          # อัปเดตแค่ image: env, secrets, network, service account คงค่าจากตอน setup
+          gcloud run deploy "$SERVICE" --image "$IMAGE" --no-traffic --tag "$TAG" --quiet
+          REVISION=$(gcloud run services describe "$SERVICE" --format='value(status.latestCreatedRevisionName)')
+          SERVICE_URL=$(gcloud run services describe "$SERVICE" --format='value(status.url)')
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "revision=$REVISION" >> "$GITHUB_OUTPUT"
+          echo "tag_url=${SERVICE_URL/https:\/\//https://$TAG---}" >> "$GITHUB_OUTPUT"
+          echo "service_url=$SERVICE_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test new revision
+        run: |
+          for i in 1 2 3 4 5; do
+            if curl -fsS --max-time 10 "${{ steps.deploy.outputs.tag_url }}/healthz"; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::Smoke test failed - traffic stays on the previous revision"
+          exit 1
+
+      - name: Shift 100% traffic to new revision
+        run: |
+          gcloud run services update-traffic "$SERVICE" \
+            --to-revisions "${{ steps.deploy.outputs.revision }}=100"
+
+      - name: Remove deployment tag
+        if: always() && steps.deploy.outputs.tag != ''
+        run: |
+          gcloud run services update-traffic "$SERVICE" \
+            --remove-tags "${{ steps.deploy.outputs.tag }}" || true
+
+      - name: Summary
+        run: |
+          {
+            echo "### Deployed ${{ steps.deploy.outputs.revision }}"
+            echo "- Image: \`$IMAGE\`"
+            echo "- URL: ${{ steps.deploy.outputs.service_url }}"
+            echo "- Rollback: \`gcloud run services update-traffic $SERVICE --region $REGION --to-revisions=<previous-revision>=100\`"
+          } >> "$GITHUB_STEP_SUMMARY"
