@@ -13,7 +13,7 @@ from app.core.database import Base
 class User(Base, TimestampMixin):
     """
     User Model - เก็บข้อมูลผู้ใช้งานระบบ
-    
+
     Relationships:
         - bookings: การจองของผู้ใช้
         - requests: คำร้องของผู้ใช้
@@ -34,9 +34,7 @@ class User(Base, TimestampMixin):
     )
 
     # Profile Information
-    full_name: Mapped[str] = mapped_column(
-        String(255), nullable=False, comment="ชื่อ-นามสกุล"
-    )
+    full_name: Mapped[str] = mapped_column(String(255), nullable=False, comment="ชื่อ-นามสกุล")
     student_id: Mapped[str | None] = mapped_column(
         String(50), unique=True, index=True, nullable=True, comment="รหัสนักศึกษา (สำหรับ Student)"
     )
@@ -70,10 +68,16 @@ class User(Base, TimestampMixin):
 
     # Relationships (Lazy Loading)
     bookings: Mapped[list["Booking"]] = relationship(
-        "Booking", back_populates="user", cascade="all, delete-orphan"
+        "Booking",
+        back_populates="user",
+        foreign_keys="Booking.user_id",
+        cascade="all, delete-orphan",
     )
     requests: Mapped[list["Request"]] = relationship(
-        "Request", back_populates="user", cascade="all, delete-orphan"
+        "Request",
+        back_populates="user",
+        foreign_keys="Request.user_id",
+        cascade="all, delete-orphan",
     )
     notifications: Mapped[list["Notification"]] = relationship(
         "Notification", back_populates="user", cascade="all, delete-orphan"

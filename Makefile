@@ -31,7 +31,7 @@ help:
 	@echo "  make lint       - Run linter"
 	@echo ""
 	@echo "  make prod-test  - Test production build locally"
-	@echo "  make deploy-gcp - Deploy to Google Cloud Run"
+	@echo "  (deploy: push to dev/main -> GitHub Actions -> Cloud Run, see DEPLOYMENT.md)"
 
 # =============================================================================
 # Setup & Configuration
@@ -124,13 +124,13 @@ migrate-rollback:
 
 seed:
 	@echo "🌱 Seeding database..."
-	docker-compose exec backend python seed.py
+	docker-compose exec -e SEED_DEMO_DATA=true backend python seed.py
 	@echo "✅ Seed complete!"
 	@echo ""
 	@echo "Default credentials:"
-	@echo "  Admin: admin@smartcampus.dev / admin123"
-	@echo "  Staff: staff@smartcampus.dev / staff123"
-	@echo "  Student: student1@smartcampus.dev / student123"
+	@echo "  Student: student1@smartcampus.dev / student12345"
+	@echo "  Staff:   staff@smartcampus.dev / staff12345"
+	@echo "  (admin: set SEED_ADMIN_EMAIL / SEED_ADMIN_PASSWORD before seeding)"
 
 db-shell:
 	@echo "🗄️  Opening PostgreSQL shell..."
@@ -146,23 +146,25 @@ be-shell:
 
 test:
 	@echo "🧪 Running tests..."
-	docker-compose exec backend pytest
+	-docker-compose exec db sh -c 'createdb -U "$$POSTGRES_USER" campus_test 2>/dev/null'
+	docker-compose exec -e TEST_POSTGRES_DB=campus_test backend pytest
 	@echo "✅ Tests complete!"
 
 test-cov:
 	@echo "🧪 Running tests with coverage..."
-	docker-compose exec backend pytest --cov=app --cov-report=html
+	-docker-compose exec db sh -c 'createdb -U "$$POSTGRES_USER" campus_test 2>/dev/null'
+	docker-compose exec -e TEST_POSTGRES_DB=campus_test backend pytest
 	@echo "✅ Tests complete! Coverage report: backend/htmlcov/index.html"
 
 lint:
 	@echo "🔍 Running linter..."
-	docker-compose exec backend black app --check
-	docker-compose exec backend ruff check app
+	docker-compose exec backend ruff check .
+	docker-compose exec backend ruff format --check .
 
 lint-fix:
 	@echo "🔧 Fixing lint issues..."
-	docker-compose exec backend black app
-	docker-compose exec backend ruff check app --fix
+	docker-compose exec backend ruff check . --fix
+	docker-compose exec backend ruff format .
 
 # =============================================================================
 # Production Testing
@@ -203,7 +205,8 @@ init: setup start migrate seed
 	@echo "  API Docs: http://localhost:8000/api/v1/docs"
 	@echo ""
 	@echo "Default credentials:"
-	@echo "  Student: student1@smartcampus.dev / student123"
+	@echo "  Student: student1@smartcampus.dev / student12345"
+	@echo "  Staff:   staff@smartcampus.dev / staff12345"
 
 # =============================================================================
 # Windows-specific helpers (use PowerShell)

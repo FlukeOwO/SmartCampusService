@@ -1,97 +1,52 @@
 """
-Base Models - Shared SQLAlchemy Models และ Pydantic Schemas
+Shared model mixins และ response schemas
 """
 
 from datetime import datetime
-from typing import Any
+from typing import Generic, TypeVar
 
+from fastapi import Query
+from pydantic import BaseModel
 from sqlalchemy import DateTime, func
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column
 
-
-# ============================================================================
-# SQLAlchemy Base Models
-# ============================================================================
+from app.common.constants import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 
 
 class TimestampMixin:
-    """
-    Mixin สำหรับ timestamp columns
-    เพิ่ม created_at และ updated_at ให้กับทุก table
-    """
-
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        nullable=False,
-        comment="เวลาที่สร้างระเบียน",
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )
-
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        onupdate=func.now(),
-        nullable=False,
-        comment="เวลาที่อัปเดตระเบียนล่าสุด",
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
 
-# ============================================================================
-# Common Response Schemas
-# ============================================================================
-
-from pydantic import BaseModel, ConfigDict
+T = TypeVar("T")
 
 
-class ResponseBase(BaseModel):
-    """Base Response Schema"""
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class MessageResponse(BaseModel):
-    """Simple message response"""
-
-    message: str
-    detail: str | None = None
-
-
-class PaginationParams(BaseModel):
-    """Pagination parameters"""
-
-    page: int = 1
-    page_size: int = 10
-    
-    @property
-    def offset(self) -> int:
-        """Calculate offset from page and page_size"""
-        return (self.page - 1) * self.page_size
-
-
-class PaginatedResponse(BaseModel):
-    """Paginated response wrapper"""
-
-    items: list[Any]
+class Page(BaseModel, Generic[T]):
+    items: list[T]
     total: int
     page: int
     page_size: int
-    total_pages: int
 
-    @classmethod
-    def create(
-        cls,
-        items: list[Any],
-        total: int,
-        page: int,
-        page_size: int,
+
+class PageParams:
+    """Query params ?page=&page_size= ใช้ร่วมกันทุก list endpoint"""
+
+    def __init__(
+        self,
+        page: int = Query(1, ge=1),
+        page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
     ):
-        """Factory method for creating paginated response"""
-        import math
-        
-        return cls(
-            items=items,
-            total=total,
-            page=page,
-            page_size=page_size,
-            total_pages=math.ceil(total / page_size) if page_size > 0 else 0,
-        )
+        self.page = page
+        self.page_size = page_size
+
+    @property
+    def offset(self) -> int:
+        return (self.page - 1) * self.page_size
+
+
+class MessageResponse(BaseModel):
+    message: str

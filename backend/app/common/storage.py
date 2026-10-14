@@ -1,406 +1,175 @@
 """
-Storage Abstraction Layer - Cloud-Ready File Storage
-ใช้ Adapter Pattern เพื่อสลับระหว่าง Local Storage และ Google Cloud Storage
+Storage adapter - สลับ Local (dev) <-> Google Cloud Storage (cloud) ด้วย STORAGE_PROVIDER
 
-Architecture:
-- StorageProvider (Abstract Interface)
-- LocalStorageProvider (สำหรับ Development)
-- GCSStorageProvider (สำหรับ Production บน GCP)
+- bucket บน cloud เป็น private: ไม่มี public URL, เปิดไฟล์ผ่าน V4 Signed URL อายุสั้นเท่านั้น
+- บน Cloud Run ไม่มี private key ของ service account จึงเซ็นผ่าน IAM signBlob
+  (service account ต้องมี roles/iam.serviceAccountTokenCreator บนตัวเอง)
+- google-cloud-storage เป็น client แบบ blocking จึงเรียกผ่าน run_in_threadpool
 """
 
-import os
-import uuid
+import logging
+import threading
 from abc import ABC, abstractmethod
-from datetime import datetime
-from pathlib import Path
-from typing import BinaryIO
+from datetime import timedelta
+from functools import lru_cache
+from pathlib import Path, PurePosixPath
 
 import aiofiles
 from fastapi import UploadFile
+from starlette.concurrency import run_in_threadpool
 
+from app.common.constants import ALLOWED_UPLOADS
+from app.common.exceptions import PayloadTooLargeException, StorageException, ValidationException
 from app.core.config import settings
 
+logger = logging.getLogger(__name__)
 
-# ============================================================================
-# Storage Provider Interface (Abstract Base Class)
-# ============================================================================
+_CHUNK = 64 * 1024
 
 
 class StorageProvider(ABC):
-    """
-    Abstract Interface สำหรับ Storage Provider
-    ทุก Provider ต้อง implement methods เหล่านี้
-    """
+    @abstractmethod
+    async def save(self, key: str, data: bytes, content_type: str) -> None: ...
 
     @abstractmethod
-    async def upload_file(
-        self,
-        file: UploadFile,
-        folder: str,
-        filename: str | None = None,
-    ) -> dict[str, str]:
-        """
-        Upload file และคืนค่า metadata
-        
-        Args:
-            file: UploadFile object จาก FastAPI
-            folder: โฟลเดอร์ปลายทาง (เช่น 'requests', 'avatars')
-            filename: ชื่อไฟล์ (ถ้าไม่ระบุจะสร้างแบบ random)
-        
-        Returns:
-            Dictionary ที่มี 'url', 'path', 'filename', 'size'
-        """
-        pass
+    async def delete(self, key: str) -> None: ...
 
     @abstractmethod
-    async def delete_file(self, file_path: str) -> bool:
-        """
-        ลบไฟล์
-        
-        Args:
-            file_path: Path ของไฟล์ที่ต้องการลบ
-        
-        Returns:
-            True ถ้าลบสำเร็จ
-        """
-        pass
-
-    @abstractmethod
-    async def get_file_url(self, file_path: str) -> str:
-        """
-        สร้าง URL สำหรับเข้าถึงไฟล์
-        
-        Args:
-            file_path: Path ของไฟล์
-        
-        Returns:
-            Public URL
-        """
-        pass
-
-    @abstractmethod
-    async def file_exists(self, file_path: str) -> bool:
-        """
-        ตรวจสอบว่าไฟล์มีอยู่หรือไม่
-        
-        Args:
-            file_path: Path ของไฟล์
-        
-        Returns:
-            True ถ้าไฟล์มีอยู่
-        """
-        pass
-
-
-# ============================================================================
-# Local Storage Provider (สำหรับ Development)
-# ============================================================================
+    async def signed_url(self, key: str, filename: str) -> str: ...
 
 
 class LocalStorageProvider(StorageProvider):
-    """
-    Local File System Storage Provider
-    เก็บไฟล์ใน Local Volume (Docker Volume หรือ Local Directory)
-    """
+    """เก็บไฟล์ใน volume ของเครื่อง dev และเสิร์ฟผ่าน /storage"""
 
     def __init__(self, base_path: str):
-        """
-        Initialize Local Storage Provider
-        
-        Args:
-            base_path: Base directory สำหรับเก็บไฟล์ (เช่น '/app/storage')
-        """
-        self.base_path = Path(base_path)
+        self.base_path = Path(base_path).resolve()
         self.base_path.mkdir(parents=True, exist_ok=True)
 
-    def _generate_filename(self, original_filename: str) -> str:
-        """
-        สร้างชื่อไฟล์แบบ unique
-        Format: {timestamp}_{uuid}_{original_name}
-        """
-        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        unique_id = uuid.uuid4().hex[:8]
-        # เก็บเฉพาะ extension
-        ext = Path(original_filename).suffix
-        safe_name = f"{timestamp}_{unique_id}{ext}"
-        return safe_name
+    def _path(self, key: str) -> Path:
+        path = (self.base_path / key).resolve()
+        if not path.is_relative_to(self.base_path):
+            raise ValidationException("Invalid storage key")
+        return path
 
-    async def upload_file(
-        self,
-        file: UploadFile,
-        folder: str,
-        filename: str | None = None,
-    ) -> dict[str, str]:
-        """Upload file ไปยัง Local Storage"""
-        # สร้างชื่อไฟล์
-        if filename is None:
-            filename = self._generate_filename(file.filename or "unnamed")
+    async def save(self, key: str, data: bytes, content_type: str) -> None:
+        path = self._path(key)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        async with aiofiles.open(path, "wb") as f:
+            await f.write(data)
 
-        # สร้างโฟลเดอร์ปลายทาง
-        target_folder = self.base_path / folder
-        target_folder.mkdir(parents=True, exist_ok=True)
+    async def delete(self, key: str) -> None:
+        self._path(key).unlink(missing_ok=True)
 
-        # Path เต็มของไฟล์
-        file_path = target_folder / filename
-        relative_path = f"{folder}/{filename}"
-
-        # เขียนไฟล์
-        async with aiofiles.open(file_path, "wb") as f:
-            content = await file.read()
-            await f.write(content)
-
-        # คำนวณขนาดไฟล์
-        file_size = len(content)
-
-        return {
-            "url": f"/storage/{relative_path}",  # URL สำหรับเข้าถึง (ต้องมี Static Files route)
-            "path": relative_path,
-            "filename": filename,
-            "size": file_size,
-            "folder": folder,
-        }
-
-    async def delete_file(self, file_path: str) -> bool:
-        """ลบไฟล์จาก Local Storage"""
-        try:
-            full_path = self.base_path / file_path
-            if full_path.exists():
-                full_path.unlink()
-                return True
-            return False
-        except Exception as e:
-            print(f"Error deleting file {file_path}: {e}")
-            return False
-
-    async def get_file_url(self, file_path: str) -> str:
-        """สร้าง URL สำหรับเข้าถึงไฟล์"""
-        return f"/storage/{file_path}"
-
-    async def file_exists(self, file_path: str) -> bool:
-        """ตรวจสอบว่าไฟล์มีอยู่หรือไม่"""
-        full_path = self.base_path / file_path
-        return full_path.exists()
-
-
-# ============================================================================
-# Google Cloud Storage Provider (สำหรับ Production)
-# ============================================================================
+    async def signed_url(self, key: str, filename: str) -> str:
+        return f"/storage/{key}"
 
 
 class GCSStorageProvider(StorageProvider):
-    """
-    Google Cloud Storage Provider
-    เก็บไฟล์บน GCS Bucket (Cloud-Ready)
-    """
-
-    def __init__(self, bucket_name: str, project_id: str | None = None):
-        """
-        Initialize GCS Storage Provider
-        
-        Args:
-            bucket_name: GCS Bucket name
-            project_id: GCP Project ID (optional)
-        """
+    def __init__(self, bucket_name: str, project_id: str | None):
+        import google.auth
         from google.cloud import storage
 
-        self.bucket_name = bucket_name
-        self.client = storage.Client(project=project_id)
-        self.bucket = self.client.bucket(bucket_name)
-
-    def _generate_filename(self, original_filename: str) -> str:
-        """สร้างชื่อไฟล์แบบ unique"""
-        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        unique_id = uuid.uuid4().hex[:8]
-        ext = Path(original_filename).suffix
-        safe_name = f"{timestamp}_{unique_id}{ext}"
-        return safe_name
-
-    async def upload_file(
-        self,
-        file: UploadFile,
-        folder: str,
-        filename: str | None = None,
-    ) -> dict[str, str]:
-        """Upload file ไปยัง GCS"""
-        # สร้างชื่อไฟล์
-        if filename is None:
-            filename = self._generate_filename(file.filename or "unnamed")
-
-        # Path ใน GCS (blob name)
-        blob_name = f"{folder}/{filename}"
-        blob = self.bucket.blob(blob_name)
-
-        # อ่านข้อมูลไฟล์
-        content = await file.read()
-
-        # Upload ไป GCS (sync operation - ใน production อาจใช้ async library)
-        blob.upload_from_string(
-            content,
-            content_type=file.content_type or "application/octet-stream",
+        self._credentials, _ = google.auth.default(
+            scopes=["https://www.googleapis.com/auth/cloud-platform"]
         )
+        self._client = storage.Client(project=project_id, credentials=self._credentials)
+        self._bucket = self._client.bucket(bucket_name)
+        self._lock = threading.Lock()
 
-        # ทำให้ไฟล์เป็น public (ถ้าต้องการ)
-        # blob.make_public()
+    def _signing_kwargs(self) -> dict:
+        from google.auth.credentials import Signing
+        from google.auth.transport.requests import Request
 
-        # คำนวณขนาดไฟล์
-        file_size = len(content)
+        # มี private key (เช่น key file ตอน dev) -> เซ็นในเครื่องได้เลย
+        if isinstance(self._credentials, Signing):
+            return {}
+        # Cloud Run (metadata server credentials) -> เซ็นผ่าน IAM signBlob
+        with self._lock:
+            if not self._credentials.valid:
+                self._credentials.refresh(Request())
+            return {
+                "service_account_email": self._credentials.service_account_email,
+                "access_token": self._credentials.token,
+            }
 
-        return {
-            "url": blob.public_url,  # Public URL
-            "path": blob_name,
-            "filename": filename,
-            "size": file_size,
-            "folder": folder,
-            "bucket": self.bucket_name,
-        }
+    def _save(self, key: str, data: bytes, content_type: str) -> None:
+        self._bucket.blob(key).upload_from_string(data, content_type=content_type)
 
-    async def delete_file(self, file_path: str) -> bool:
-        """ลบไฟล์จาก GCS"""
+    def _delete(self, key: str) -> None:
+        from google.api_core.exceptions import NotFound
+
         try:
-            blob = self.bucket.blob(file_path)
-            blob.delete()
-            return True
-        except Exception as e:
-            print(f"Error deleting file {file_path} from GCS: {e}")
-            return False
+            self._bucket.blob(key).delete()
+        except NotFound:
+            pass
 
-    async def get_file_url(self, file_path: str) -> str:
-        """สร้าง URL สำหรับเข้าถึงไฟล์"""
-        blob = self.bucket.blob(file_path)
-        return blob.public_url
-
-    async def file_exists(self, file_path: str) -> bool:
-        """ตรวจสอบว่าไฟล์มีอยู่ใน GCS หรือไม่"""
-        blob = self.bucket.blob(file_path)
-        return blob.exists()
-
-
-# ============================================================================
-# Storage Service (Factory Pattern)
-# ============================================================================
-
-
-class StorageService:
-    """
-    Storage Service - จัดการการเลือกใช้ Provider ตาม Configuration
-    ใช้ Factory Pattern เพื่อสร้าง Provider ที่เหมาะสม
-    """
-
-    def __init__(self, provider: StorageProvider):
-        self.provider = provider
-
-    async def upload(
-        self,
-        file: UploadFile,
-        folder: str = "uploads",
-        filename: str | None = None,
-        max_size_mb: int | None = None,
-    ) -> dict[str, str]:
-        """
-        Upload file พร้อมตรวจสอบขนาด
-        
-        Args:
-            file: UploadFile object
-            folder: โฟลเดอร์ปลายทาง
-            filename: ชื่อไฟล์ (optional)
-            max_size_mb: ขนาดไฟล์สูงสุด (MB)
-        
-        Returns:
-            File metadata dictionary
-        
-        Raises:
-            ValueError: ถ้าไฟล์ใหญ่เกินกำหนด
-        """
-        # ตรวจสอบขนาดไฟล์
-        if max_size_mb:
-            content = await file.read()
-            file_size_mb = len(content) / (1024 * 1024)
-            
-            if file_size_mb > max_size_mb:
-                raise ValueError(
-                    f"File size ({file_size_mb:.2f} MB) exceeds maximum allowed size ({max_size_mb} MB)"
-                )
-            
-            # Reset file pointer
-            await file.seek(0)
-
-        return await self.provider.upload_file(file, folder, filename)
-
-    async def delete(self, file_path: str) -> bool:
-        """ลบไฟล์"""
-        return await self.provider.delete_file(file_path)
-
-    async def get_url(self, file_path: str) -> str:
-        """ดึง URL ของไฟล์"""
-        return await self.provider.get_file_url(file_path)
-
-    async def exists(self, file_path: str) -> bool:
-        """ตรวจสอบว่าไฟล์มีอยู่หรือไม่"""
-        return await self.provider.file_exists(file_path)
-
-
-# ============================================================================
-# Storage Service Factory
-# ============================================================================
-
-
-def get_storage_service() -> StorageService:
-    """
-    Factory Function สำหรับสร้าง StorageService ตาม Configuration
-    อ่านค่าจาก settings.STORAGE_PROVIDER
-    
-    Returns:
-        StorageService instance with appropriate provider
-    """
-    if settings.STORAGE_PROVIDER == "gcs":
-        # Google Cloud Storage (Production)
-        if not settings.GCS_BUCKET_NAME:
-            raise ValueError("GCS_BUCKET_NAME must be set when using GCS storage provider")
-        
-        provider = GCSStorageProvider(
-            bucket_name=settings.GCS_BUCKET_NAME,
-            project_id=settings.GCS_PROJECT_ID or None,
+    def _signed_url(self, key: str, filename: str) -> str:
+        return self._bucket.blob(key).generate_signed_url(
+            version="v4",
+            method="GET",
+            expiration=timedelta(minutes=settings.SIGNED_URL_EXPIRE_MINUTES),
+            response_disposition=f'inline; filename="{filename}"',
+            **self._signing_kwargs(),
         )
-    else:
-        # Local Storage (Development)
-        provider = LocalStorageProvider(base_path=settings.LOCAL_STORAGE_PATH)
 
-    return StorageService(provider=provider)
+    async def save(self, key: str, data: bytes, content_type: str) -> None:
+        try:
+            await run_in_threadpool(self._save, key, data, content_type)
+        except Exception as exc:
+            logger.exception("GCS upload failed for %s", key)
+            raise StorageException() from exc
+
+    async def delete(self, key: str) -> None:
+        try:
+            await run_in_threadpool(self._delete, key)
+        except Exception:
+            logger.exception("GCS delete failed for %s", key)
+
+    async def signed_url(self, key: str, filename: str) -> str:
+        try:
+            return await run_in_threadpool(self._signed_url, key, filename)
+        except Exception as exc:
+            logger.exception("Signed URL generation failed for %s", key)
+            raise StorageException("Could not create file URL") from exc
 
 
-# ============================================================================
-# Utility Functions
-# ============================================================================
+@lru_cache
+def get_storage() -> StorageProvider:
+    if settings.STORAGE_PROVIDER == "gcs":
+        if not settings.GCS_BUCKET_NAME:
+            raise RuntimeError("GCS_BUCKET_NAME must be set when STORAGE_PROVIDER=gcs")
+        return GCSStorageProvider(settings.GCS_BUCKET_NAME, settings.GCS_PROJECT_ID or None)
+    return LocalStorageProvider(settings.LOCAL_STORAGE_PATH)
 
 
-def validate_file_type(filename: str, allowed_extensions: list[str]) -> bool:
+async def read_validated_upload(file: UploadFile) -> tuple[bytes, str, str]:
     """
-    ตรวจสอบ file extension
-    
-    Args:
-        filename: ชื่อไฟล์
-        allowed_extensions: List ของ extensions ที่อนุญาต (เช่น ['.jpg', '.png'])
-    
-    Returns:
-        True ถ้า extension ถูกต้อง
+    อ่านไฟล์ทีละ chunk (หยุดทันทีเมื่อเกินขนาด) แล้วตรวจนามสกุล + magic bytes
+
+    Returns: (data, extension, content_type)
     """
-    ext = Path(filename).suffix.lower()
-    return ext in allowed_extensions
+    original = PurePosixPath(file.filename or "")
+    ext = original.suffix.lower()
+    if ext not in ALLOWED_UPLOADS:
+        raise ValidationException(
+            f"File type '{ext or 'unknown'}' is not allowed",
+            details={"allowed": sorted(ALLOWED_UPLOADS)},
+        )
 
+    limit = settings.max_upload_size_bytes
+    buf = bytearray()
+    while chunk := await file.read(_CHUNK):
+        buf.extend(chunk)
+        if len(buf) > limit:
+            raise PayloadTooLargeException(
+                f"File exceeds the {settings.MAX_UPLOAD_SIZE_MB} MB limit"
+            )
+    if not buf:
+        raise ValidationException("File is empty")
 
-def get_file_extension(filename: str) -> str:
-    """ดึง file extension"""
-    return Path(filename).suffix.lower()
-
-
-# ตัวอย่างการใช้งาน:
-# 
-# from app.common.storage import get_storage_service
-# 
-# storage = get_storage_service()
-# result = await storage.upload(
-#     file=uploaded_file,
-#     folder="requests",
-#     max_size_mb=10
-# )
-# print(result['url'])  # URL สำหรับเข้าถึงไฟล์
+    content_type, signatures = ALLOWED_UPLOADS[ext]
+    if not any(bytes(buf).startswith(sig) for sig in signatures):
+        raise ValidationException("File content does not match its extension")
+    if ext == ".webp" and buf[8:12] != b"WEBP":
+        raise ValidationException("File content does not match its extension")
+    return bytes(buf), ext, content_type

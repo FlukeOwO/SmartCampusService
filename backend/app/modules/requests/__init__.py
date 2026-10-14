@@ -1,3 +1,1 @@
-"""
-Request Management Module
-"""
+"""Requests module - service requests, attachments, assignment"""

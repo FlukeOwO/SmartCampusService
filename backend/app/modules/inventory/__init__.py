@@ -1,3 +1,1 @@
-"""
-Inventory Module - Room & Equipment Management
-"""
+"""Inventory module - rooms and equipment"""

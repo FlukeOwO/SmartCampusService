@@ -63,8 +63,6 @@ logs/
 storage/
 uploads/
 
-# Docker
-.dockerignore
 
 # OS
 Thumbs.db
@@ -101,8 +99,4 @@ frontend/node_modules/
 .git-cleanup.sh
 git-cleanup.ps1
 
-# Old/refactored code (should be deleted)
-backend/app/api/
-backend/app/services/
-backend/app/crud/
-backend/app/database.py
+.ruff_cache/

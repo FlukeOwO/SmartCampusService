@@ -2,20 +2,19 @@
 Notification Model - การแจ้งเตือนภายในระบบ
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.common.base_models import TimestampMixin
-from app.common.constants import NotificationType
 from app.core.database import Base
 
 
 class Notification(Base, TimestampMixin):
     """
     Notification Model - การแจ้งเตือนใน Application
-    
+
     Relationships:
         - user: ผู้รับการแจ้งเตือน
     """
@@ -40,12 +39,8 @@ class Notification(Base, TimestampMixin):
         index=True,
         comment="ประเภทการแจ้งเตือน: request_update, booking_confirmed, etc.",
     )
-    title: Mapped[str] = mapped_column(
-        String(255), nullable=False, comment="หัวข้อการแจ้งเตือน"
-    )
-    message: Mapped[str] = mapped_column(
-        Text, nullable=False, comment="เนื้อหาการแจ้งเตือน"
-    )
+    title: Mapped[str] = mapped_column(String(255), nullable=False, comment="หัวข้อการแจ้งเตือน")
+    message: Mapped[str] = mapped_column(Text, nullable=False, comment="เนื้อหาการแจ้งเตือน")
 
     # Related Resource (Optional)
     related_resource_type: Mapped[str | None] = mapped_column(
@@ -85,4 +80,4 @@ class Notification(Base, TimestampMixin):
     def mark_as_read(self) -> None:
         """ทำเครื่องหมายว่าอ่านแล้ว"""
         self.is_read = True
-        self.read_at = datetime.utcnow()
+        self.read_at = datetime.now(UTC)

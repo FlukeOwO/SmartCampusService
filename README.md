@@ -87,8 +87,8 @@ docker-compose ps
 # Run database migrations
 docker-compose exec backend alembic upgrade head
 
-# Seed initial data (users, rooms, equipments)
-docker-compose exec backend python seed.py
+# Seed ข้อมูลตัวอย่าง (บัญชี demo, ห้อง, อุปกรณ์)
+docker-compose exec -e SEED_DEMO_DATA=true backend python seed.py
 ```
 
 ### 5. Access Services
@@ -110,22 +110,24 @@ curl -X POST http://localhost:8000/api/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{
     "email": "student1@smartcampus.dev",
-    "password": "student123"
+    "password": "student12345"
   }'
 
-# List rooms
-curl http://localhost:8000/api/v1/inventory/rooms
+# List rooms (ต้องแนบ access_token)
+curl http://localhost:8000/api/v1/inventory/rooms -H "Authorization: Bearer <access_token>"
 ```
 
 ## 🔑 Default Credentials
 
-จาก seed.py:
+จาก `seed.py` เมื่อ `SEED_DEMO_DATA=true` (ใช้บนเครื่อง dev เท่านั้น):
 
 | Role | Email | Password |
 |------|-------|----------|
-| Admin | admin@smartcampus.dev | admin123 |
-| Staff | staff@smartcampus.dev | staff123 |
-| Student | student1@smartcampus.dev | student123 |
+| Staff | staff@smartcampus.dev | staff12345 |
+| Student | student1@smartcampus.dev | student12345 |
+| Student | student2@smartcampus.dev | student12345 |
+
+บัญชี admin สร้างด้วย `SEED_ADMIN_EMAIL` + `SEED_ADMIN_PASSWORD` (≥ 12 ตัวอักษร)
 
 ## 📁 Project Structure
 
@@ -137,20 +139,25 @@ SmartCampusService/
 │   │   ├── common/          # Storage, Exceptions, Constants
 │   │   ├── models/          # SQLAlchemy Models
 │   │   ├── schemas/         # Pydantic Schemas
-│   │   └── modules/         # Business Logic
-│   │       ├── auth/        # Authentication
-│   │       ├── bookings/    # Booking Management
-│   │       └── inventory/   # Rooms & Equipment
+│   │   └── modules/         # Router -> Service ต่อโดเมน
+│   │       ├── auth/        # Register, login, refresh, RBAC
+│   │       ├── requests/    # คำร้อง + ไฟล์แนบ + มอบหมายงาน
+│   │       ├── bookings/    # จองห้อง/อุปกรณ์ + กันจองซ้อน
+│   │       ├── inventory/   # Rooms & Equipment
+│   │       └── notifications/
 │   ├── alembic/            # Database Migrations
-│   ├── Dockerfile          # Multi-stage Docker build
+│   ├── tests/              # pytest (ต้องมี PostgreSQL)
+│   ├── Dockerfile          # development / production targets
 │   └── requirements.txt    # Python dependencies
+├── infra/gcp/setup.sh      # ตั้งค่า GCP ครั้งแรก (VPC, Cloud SQL, WIF, Cloud Run)
+├── .github/workflows/      # backend-ci.yml, backend-cd.yml
 ├── frontend/               # React Frontend
 │   ├── src/
 │   ├── Dockerfile
 │   └── nginx.conf
 ├── docker-compose.yml      # Development environment
 ├── .env.example           # Environment template
-└── DEPLOYMENT.md          # Production deployment guide
+└── DEPLOYMENT.md          # Cloud Run + Cloud SQL deployment guide
 ```
 
 ## 🔧 Development Commands
@@ -330,6 +337,8 @@ MIT License
 ---
 
 **Built with ❤️ using FastAPI, React, and PostgreSQL**
-#   S m a r t C a m p u s S e r v i c e  
- #   S m a r t C a m p u s S e r v i c e  
+#   S m a r t C a m p u s S e r v i c e 
+ 
+ #   S m a r t C a m p u s S e r v i c e 
+ 
  

@@ -1,22 +1,17 @@
 """
-Configuration Management - Cloud-Ready Settings
-ใช้ Pydantic Settings เพื่อโหลดค่าจาก Environment Variables
-รองรับทั้ง Local Development และ Production บน GCP
+Configuration - อ่านค่าทั้งหมดจาก Environment Variables (12-factor)
+ค่าลับ (POSTGRES_PASSWORD, SECRET_KEY) บน Cloud Run มาจาก Secret Manager
 """
 
+import os
 from functools import lru_cache
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import Field, PostgresDsn, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """
-    Application Settings - ดึงค่าจาก Environment Variables
-    ใช้ 12-Factor App Principles เพื่อให้ Config แยกออกจาก Code
-    """
-
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -25,152 +20,123 @@ class Settings(BaseSettings):
     )
 
     # -------------------------------------------------------------------------
-    # Application Settings
+    # Application
     # -------------------------------------------------------------------------
-    ENVIRONMENT: Literal["development", "staging", "production"] = "development"
-    DEBUG: bool = True
+    ENVIRONMENT: Literal["development", "test", "staging", "production"] = "development"
+    DEBUG: bool = False
     APP_NAME: str = "Smart Campus Service Platform"
-    API_VERSION: str = "v1"
+    APP_VERSION: str = "1.0.0"
     API_PREFIX: str = "/api/v1"
+    # None = เปิด Swagger ทุก environment ยกเว้น production
+    ENABLE_DOCS: bool | None = None
 
     # -------------------------------------------------------------------------
-    # Server Settings
+    # Security / JWT
     # -------------------------------------------------------------------------
-    BACKEND_HOST: str = "0.0.0.0"
-    BACKEND_PORT: int = 8000
-
-    # -------------------------------------------------------------------------
-    # Security Settings
-    # -------------------------------------------------------------------------
-    SECRET_KEY: str = Field(
-        ...,
-        min_length=32,
-        description="JWT Secret Key - ต้องมีความยาวอย่างน้อย 32 ตัวอักษร",
-    )
+    SECRET_KEY: str = Field(..., min_length=32)
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     BCRYPT_ROUNDS: int = 12
+    LOGIN_RATE_LIMIT: str = "5/minute"
+    RATE_LIMIT_ENABLED: bool = True
 
     # -------------------------------------------------------------------------
-    # Database Settings (PostgreSQL)
+    # Database (PostgreSQL / Cloud SQL private IP)
     # -------------------------------------------------------------------------
-    POSTGRES_SERVER: str = Field(..., description="PostgreSQL Host")
+    POSTGRES_SERVER: str
     POSTGRES_PORT: int = 5432
-    POSTGRES_USER: str = Field(..., description="PostgreSQL Username")
-    POSTGRES_PASSWORD: str = Field(..., description="PostgreSQL Password")
-    POSTGRES_DB: str = Field(..., description="PostgreSQL Database Name")
-
-    # Connection Pool Settings
-    DB_POOL_SIZE: int = 5
-    DB_MAX_OVERFLOW: int = 10
+    POSTGRES_USER: str
+    POSTGRES_PASSWORD: str
+    POSTGRES_DB: str
+    # Cloud SQL ตั้ง ssl-mode=ENCRYPTED_ONLY จึงต้องใช้ "require" บน cloud
+    DB_SSL: Literal["disable", "require"] = "disable"
+    DB_POOL_SIZE: int = 3
+    DB_MAX_OVERFLOW: int = 2
     DB_POOL_TIMEOUT: int = 30
-    DB_POOL_RECYCLE: int = 3600
+    DB_POOL_RECYCLE: int = 1800
+    DB_STATEMENT_TIMEOUT_MS: int = 30000
     DB_ECHO: bool = False
+
+    # -------------------------------------------------------------------------
+    # HTTP
+    # -------------------------------------------------------------------------
+    CORS_ORIGINS: Annotated[list[str], NoDecode] = [
+        "http://localhost:3000",
+        "http://localhost:5173",
+    ]
+    # Host ที่ยอมรับ (TrustedHostMiddleware) เช่น campus-api-xxxx.asia-southeast1.run.app
+    ALLOWED_HOSTS: Annotated[list[str], NoDecode] = ["*"]
+
+    @field_validator("CORS_ORIGINS", "ALLOWED_HOSTS", mode="before")
+    @classmethod
+    def _split_csv(cls, v: str | list[str]) -> list[str]:
+        if isinstance(v, str):
+            return [item.strip() for item in v.split(",") if item.strip()]
+        return v
+
+    # -------------------------------------------------------------------------
+    # Storage (local สำหรับ dev, gcs สำหรับ cloud)
+    # -------------------------------------------------------------------------
+    STORAGE_PROVIDER: Literal["local", "gcs"] = "local"
+    LOCAL_STORAGE_PATH: str = "/app/storage"
+    MAX_UPLOAD_SIZE_MB: int = 10
+    MAX_FILES_PER_REQUEST: int = 5
+    GCS_BUCKET_NAME: str = ""
+    GCS_PROJECT_ID: str = ""
+    SIGNED_URL_EXPIRE_MINUTES: int = 15
+
+    # -------------------------------------------------------------------------
+    # Logging
+    # -------------------------------------------------------------------------
+    LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    LOG_FORMAT: Literal["json", "text"] = "text"
 
     @property
     def database_url(self) -> str:
-        """
-        สร้าง Database URL สำหรับ Async SQLAlchemy
-        Format: postgresql+asyncpg://user:pass@host:port/db
-        """
         return (
             f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
             f"@{self.POSTGRES_SERVER}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
         )
 
     @property
-    def database_url_sync(self) -> str:
-        """
-        Database URL สำหรับ Alembic Migrations (Sync)
-        Format: postgresql://user:pass@host:port/db
-        """
-        return (
-            f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
-            f"@{self.POSTGRES_SERVER}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
-        )
-
-    # -------------------------------------------------------------------------
-    # CORS Settings
-    # -------------------------------------------------------------------------
-    CORS_ORIGINS: list[str] = Field(
-        default=["http://localhost:3000", "http://localhost:5173"],
-        description="Allowed CORS Origins",
-    )
-
-    @field_validator("CORS_ORIGINS", mode="before")
-    @classmethod
-    def parse_cors_origins(cls, v: str | list[str]) -> list[str]:
-        """แปลง comma-separated string เป็น list"""
-        if isinstance(v, str):
-            return [origin.strip() for origin in v.split(",") if origin.strip()]
-        return v
-
-    # -------------------------------------------------------------------------
-    # Storage Settings (Local vs Google Cloud Storage)
-    # -------------------------------------------------------------------------
-    STORAGE_PROVIDER: Literal["local", "gcs"] = "local"
-    LOCAL_STORAGE_PATH: str = "/app/storage"
-    MAX_UPLOAD_SIZE_MB: int = 10
-
-    # Google Cloud Storage Settings
-    GCS_BUCKET_NAME: str = ""
-    GCS_PROJECT_ID: str = ""
-    GOOGLE_APPLICATION_CREDENTIALS: str = ""
+    def db_connect_args(self) -> dict:
+        args: dict = {
+            "server_settings": {
+                "timezone": "UTC",
+                "statement_timeout": str(self.DB_STATEMENT_TIMEOUT_MS),
+            }
+        }
+        if self.DB_SSL == "require":
+            args["ssl"] = "require"
+        return args
 
     @property
     def max_upload_size_bytes(self) -> int:
-        """แปลง MB เป็น Bytes"""
         return self.MAX_UPLOAD_SIZE_MB * 1024 * 1024
 
-    # -------------------------------------------------------------------------
-    # Logging Settings
-    # -------------------------------------------------------------------------
-    LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
-    LOG_FORMAT: Literal["json", "text"] = "text"
-    ENABLE_CLOUD_LOGGING: bool = False
-
-    # -------------------------------------------------------------------------
-    # Rate Limiting & Security
-    # -------------------------------------------------------------------------
-    RATE_LIMIT_PER_MINUTE: int = 60
-    ENABLE_SECURITY_HEADERS: bool = True
-
-    # -------------------------------------------------------------------------
-    # Feature Flags
-    # -------------------------------------------------------------------------
-    ENABLE_NOTIFICATIONS: bool = True
-    ENABLE_EMAIL_NOTIFICATIONS: bool = False
-
-    # -------------------------------------------------------------------------
-    # Cloud Run Specific Settings
-    # -------------------------------------------------------------------------
     @property
-    def is_cloud_run(self) -> bool:
-        """ตรวจสอบว่ากำลังรันบน Google Cloud Run หรือไม่"""
-        import os
-
-        return os.getenv("K_SERVICE") is not None
+    def docs_enabled(self) -> bool:
+        if self.ENABLE_DOCS is not None:
+            return self.ENABLE_DOCS
+        return not self.is_production
 
     @property
     def is_production(self) -> bool:
-        """ตรวจสอบว่าเป็น Production environment หรือไม่"""
         return self.ENVIRONMENT == "production"
 
     @property
     def is_development(self) -> bool:
-        """ตรวจสอบว่าเป็น Development environment หรือไม่"""
         return self.ENVIRONMENT == "development"
+
+    @property
+    def is_cloud_run(self) -> bool:
+        return os.getenv("K_SERVICE") is not None
 
 
 @lru_cache
 def get_settings() -> Settings:
-    """
-    สร้าง Settings Instance (Singleton Pattern)
-    ใช้ lru_cache เพื่อให้สร้างครั้งเดียวตลอดทั้ง Application Lifecycle
-    """
     return Settings()
 
 
-# Export settings instance
 settings = get_settings()

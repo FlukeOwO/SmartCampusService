@@ -1,21 +1,33 @@
 """
-Booking Service - Business Logic สำหรับการจอง
-ใช้ Pessimistic Locking (SELECT FOR UPDATE) เพื่อป้องกัน Race Condition
+Booking service - จองห้อง/อุปกรณ์ และกันการจองซ้อน 2 ชั้น
 
-Enhanced with:
-- Time validation (start < end, no past bookings)
-- Resource status checks
-- User permission validation
+ชั้นที่ 1 (ในแอป): SELECT ... FOR UPDATE ล็อกแถวห้อง/อุปกรณ์ ทำให้ request ที่แย่ง
+        ทรัพยากรเดียวกันต้องเข้าคิวกัน แล้วตรวจเวลาทับก่อน insert
+ชั้นที่ 2 (ใน DB): exclusion constraint no_overlap_room / no_overlap_equipment
+        ถ้ามีการจองทับหลุดมาได้ DB จะปฏิเสธ (SQLSTATE 23P01) ซึ่งแปลงเป็น 409
+ล็อกถูกปล่อยตอน commit ซึ่งเป็นจุดจบของ use case
 """
 
-from datetime import datetime, timedelta
-from typing import List, Optional
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
-from app.common.constants import BookingStatus, EquipmentStatus, RoomStatus, UserRole
+from app.common.base_models import PageParams
+from app.common.constants import (
+    ACTIVE_BOOKING_STATUSES,
+    BOOKING_MAX_ADVANCE_DAYS,
+    BOOKING_MIN_MINUTES,
+    EQUIPMENT_BOOKING_MAX_DAYS,
+    ROOM_BOOKING_MAX_HOURS,
+    STAFF_ROLES,
+    BookingStatus,
+    EquipmentStatus,
+    NotificationType,
+    RoomStatus,
+)
 from app.common.exceptions import (
     ConflictException,
     ForbiddenException,
@@ -23,618 +35,284 @@ from app.common.exceptions import (
     ValidationException,
 )
 from app.models import Booking, Equipment, Room, User
+from app.modules.notifications.service import notify_booking
 from app.schemas.booking import BookingCreateEquipment, BookingCreateRoom
+
+EXCLUSION_VIOLATION = "23P01"
+
+
+@dataclass(frozen=True)
+class _Target:
+    model: type[Room] | type[Equipment]
+    column: object  # Booking.room_id / Booking.equipment_id
+    label: str
+    available_status: str
+    max_duration: timedelta
+
+
+ROOM = _Target(
+    Room,
+    Booking.room_id,
+    "Room",
+    RoomStatus.AVAILABLE.value,
+    timedelta(hours=ROOM_BOOKING_MAX_HOURS),
+)
+EQUIPMENT = _Target(
+    Equipment,
+    Booking.equipment_id,
+    "Equipment",
+    EquipmentStatus.AVAILABLE.value,
+    timedelta(days=EQUIPMENT_BOOKING_MAX_DAYS),
+)
+
+
+def _utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        raise ValidationException("Datetime values must include a timezone offset")
+    return value.astimezone(UTC)
+
+
+def _is_exclusion_violation(exc: IntegrityError) -> bool:
+    orig = exc.orig
+    for candidate in (orig, getattr(orig, "__cause__", None)):
+        if getattr(candidate, "sqlstate", None) == EXCLUSION_VIOLATION:
+            return True
+    return False
+
+
+def validate_booking_window(start: datetime, end: datetime, max_duration: timedelta) -> None:
+    now = datetime.now(UTC)
+    if start >= end:
+        raise ValidationException("start_time must be before end_time")
+    if start < now:
+        raise ValidationException("Cannot book a time in the past")
+    duration = end - start
+    if duration < timedelta(minutes=BOOKING_MIN_MINUTES):
+        raise ValidationException(f"Booking must be at least {BOOKING_MIN_MINUTES} minutes")
+    if duration > max_duration:
+        raise ValidationException(f"Booking cannot be longer than {max_duration}")
+    if start > now + timedelta(days=BOOKING_MAX_ADVANCE_DAYS):
+        raise ValidationException(
+            f"Cannot book more than {BOOKING_MAX_ADVANCE_DAYS} days in advance"
+        )
 
 
 class BookingService:
-    """
-    Booking Service - จัดการการจองห้องและอุปกรณ์
-    
-    Features:
-        - Pessimistic Locking เพื่อป้องกัน Double Booking
-        - ตรวจสอบความพร้อมของห้อง/อุปกรณ์
-        - ตรวจสอบ Time Slot ซ้ำซ้อน
-        - Validation: เวลา, สถานะ Resource, สิทธิ์ผู้ใช้
-    """
-
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    # =========================================================================
-    # Validation Methods
-    # =========================================================================
+    # ----------------------------------------------------------------- create
+    async def create_room_booking(self, user: User, data: BookingCreateRoom) -> Booking:
+        return await self._create(user, ROOM, data.room_id, data)
 
-    def _validate_booking_times(
+    async def create_equipment_booking(self, user: User, data: BookingCreateEquipment) -> Booking:
+        return await self._create(user, EQUIPMENT, data.equipment_id, data)
+
+    async def _create(
         self,
-        start_time: datetime,
-        end_time: datetime,
-        min_duration_minutes: int = 15,
-        max_duration_hours: int = 24,
-        allow_past: bool = False,
-    ) -> None:
-        """
-        ตรวจสอบความถูกต้องของเวลาการจอง
-        
-        Args:
-            start_time: เวลาเริ่มต้น
-            end_time: เวลาสิ้นสุด
-            min_duration_minutes: ระยะเวลาขั้นต่ำ (นาที)
-            max_duration_hours: ระยะเวลาสูงสุด (ชั่วโมง)
-            allow_past: อนุญาตให้จองย้อนหลังหรือไม่
-        
-        Raises:
-            ValidationException: ถ้าเวลาไม่ถูกต้อง
-        """
-        now = datetime.utcnow()
-
-        # 1. ตรวจสอบว่า start_time < end_time
-        if start_time >= end_time:
-            raise ValidationException(
-                "Start time must be before end time"
-            )
-
-        # 2. ตรวจสอบว่าไม่จองย้อนหลัง (ถ้าไม่อนุญาต)
-        if not allow_past and start_time < now:
-            raise ValidationException(
-                "Cannot create bookings in the past"
-            )
-
-        # 3. ตรวจสอบระยะเวลาขั้นต่ำ
-        duration = end_time - start_time
-        min_duration = timedelta(minutes=min_duration_minutes)
-        if duration < min_duration:
-            raise ValidationException(
-                f"Booking duration must be at least {min_duration_minutes} minutes"
-            )
-
-        # 4. ตรวจสอบระยะเวลาสูงสุด
-        max_duration = timedelta(hours=max_duration_hours)
-        if duration > max_duration:
-            raise ValidationException(
-                f"Booking duration cannot exceed {max_duration_hours} hours"
-            )
-
-        # 5. ตรวจสอบว่าไม่จองล่วงหน้าเกินไป (เช่น 90 วัน)
-        max_advance_days = 90
-        max_advance = timedelta(days=max_advance_days)
-        if start_time > now + max_advance:
-            raise ValidationException(
-                f"Cannot book more than {max_advance_days} days in advance"
-            )
-
-    def _can_user_approve_booking(self, user: User) -> bool:
-        """ตรวจสอบว่า User มีสิทธิ์อนุมัติการจองหรือไม่"""
-        return user.role in [UserRole.STAFF.value, UserRole.ADMIN.value]
-
-    def _can_user_cancel_booking(self, booking: Booking, user: User) -> bool:
-        """ตรวจสอบว่า User สามารถยกเลิกการจองนี้ได้หรือไม่"""
-        # เจ้าของสามารถยกเลิกได้
-        if booking.user_id == user.id:
-            return True
-
-        # Staff/Admin สามารถยกเลิกได้ทุกการจอง
-        if user.role in [UserRole.STAFF.value, UserRole.ADMIN.value]:
-            return True
-
-        return False
-
-    # =========================================================================
-    # Room Booking
-    # =========================================================================
-
-    async def create_room_booking(
-        self, user_id: int, booking_data: BookingCreateRoom
+        user: User,
+        target: _Target,
+        resource_id: int,
+        data: BookingCreateRoom | BookingCreateEquipment,
     ) -> Booking:
-        """
-        สร้างการจองห้อง พร้อม Transaction Locking และ Enhanced Validation
-        
-        Process:
-            1. Validate booking times (start < end, no past, duration limits)
-            2. Lock ห้องด้วย SELECT FOR UPDATE
-            3. ตรวจสอบว่าห้องพร้อมใช้งาน และ status
-            4. ตรวจสอบว่ามีการจองซ้ำในช่วงเวลานั้นหรือไม่
-            5. สร้างการจอง
-        
-        Args:
-            user_id: ID ของผู้จอง
-            booking_data: ข้อมูลการจอง
-        
-        Returns:
-            Booking object ที่สร้างแล้ว
-        
-        Raises:
-            ValidationException: เวลาไม่ถูกต้อง, ห้องไม่พร้อมใช้งาน
-            NotFoundException: ไม่พบห้อง
-            ConflictException: มีการจองซ้ำในช่วงเวลานั้น
-        """
-        # 1. Validate booking times
-        self._validate_booking_times(
-            start_time=booking_data.start_time,
-            end_time=booking_data.end_time,
-            min_duration_minutes=15,
-            max_duration_hours=24,
-            allow_past=False,
+        # 1) validate เวลา (เทียบเป็น UTC เสมอ)
+        start, end = _utc(data.start_time), _utc(data.end_time)
+        validate_booking_window(start, end, target.max_duration)
+
+        # 2) ล็อกแถวทรัพยากร - request อื่นที่จองตัวเดียวกันจะรอจน transaction นี้จบ
+        resource = await self.db.scalar(
+            select(target.model).where(target.model.id == resource_id).with_for_update()
         )
+        if resource is None:
+            raise NotFoundException(f"{target.label} not found")
 
-        async with self.db.begin():
-            # 2. Lock ห้อง (Pessimistic Locking)
-            room_query = (
-                select(Room)
-                .where(Room.id == booking_data.room_id)
-                .with_for_update()  # SELECT FOR UPDATE - ป้องกัน concurrent access
-            )
-            result = await self.db.execute(room_query)
-            room = result.scalar_one_or_none()
-
-            if not room:
-                raise NotFoundException(f"Room ID {booking_data.room_id} not found")
-
-            # 3. ตรวจสอบสถานะห้อง
-            if not room.is_bookable:
-                raise ValidationException(
-                    f"Room {room.room_number} is not bookable"
-                )
-
-            if room.status != RoomStatus.AVAILABLE.value:
-                raise ValidationException(
-                    f"Room {room.room_number} is currently {room.status} and cannot be booked"
-                )
-
-            # ตรวจสอบจำนวนผู้เข้าร่วมไม่เกิน capacity
-            if booking_data.attendees_count and booking_data.attendees_count > room.capacity:
-                raise ValidationException(
-                    f"Number of attendees ({booking_data.attendees_count}) exceeds room capacity ({room.capacity})"
-                )
-
-            # 4. ตรวจสอบการจองซ้ำ (Conflict Detection)
-            conflict = await self._check_room_conflict(
-                room_id=booking_data.room_id,
-                start_time=booking_data.start_time,
-                end_time=booking_data.end_time,
-            )
-
-            if conflict:
-                raise ConflictException(
-                    f"Room {room.room_number} is already booked during this time slot"
-                )
-
-            # 5. สร้างการจอง
-            booking = Booking(
-                user_id=user_id,
-                room_id=booking_data.room_id,
-                title=booking_data.title,
-                description=booking_data.description,
-                purpose=booking_data.purpose,
-                start_time=booking_data.start_time,
-                end_time=booking_data.end_time,
-                contact_person=booking_data.contact_person,
-                contact_phone=booking_data.contact_phone,
-                attendees_count=booking_data.attendees_count,
-                notes=booking_data.notes,
-                status=BookingStatus.PENDING.value,
-            )
-
-            self.db.add(booking)
-            await self.db.flush()  # Flush to get ID
-            await self.db.refresh(booking)
-
-            return booking
-
-    async def _check_room_conflict(
-        self,
-        room_id: int,
-        start_time: datetime,
-        end_time: datetime,
-        exclude_booking_id: Optional[int] = None,
-    ) -> bool:
-        """
-        ตรวจสอบว่ามีการจองห้องซ้ำในช่วงเวลานั้นหรือไม่
-        
-        Conflict occurs when:
-            - มีการจองที่ยังใช้งานอยู่ (pending, confirmed)
-            - ช่วงเวลาทับซ้อนกัน
-        
-        Args:
-            room_id: ID ของห้อง
-            start_time: เวลาเริ่มต้น
-            end_time: เวลาสิ้นสุด
-            exclude_booking_id: ID ของการจองที่ต้องการยกเว้น (สำหรับการแก้ไข)
-        
-        Returns:
-            True ถ้ามีการจองซ้ำ
-        """
-        # สถานะที่ถือว่ายังใช้งานอยู่
-        active_statuses = [BookingStatus.PENDING.value, BookingStatus.CONFIRMED.value]
-
-        # Query สำหรับตรวจสอบการทับซ้อนของเวลา
-        # Overlap occurs when: (start_time < existing_end) AND (end_time > existing_start)
-        conflict_query = select(Booking).where(
-            and_(
-                Booking.room_id == room_id,
-                Booking.status.in_(active_statuses),
-                Booking.start_time < end_time,
-                Booking.end_time > start_time,
-            )
-        )
-
-        # ยกเว้นการจองที่กำลังแก้ไข
-        if exclude_booking_id:
-            conflict_query = conflict_query.where(Booking.id != exclude_booking_id)
-
-        result = await self.db.execute(conflict_query)
-        conflicting_booking = result.scalar_one_or_none()
-
-        return conflicting_booking is not None
-
-    # =========================================================================
-    # Equipment Booking
-    # =========================================================================
-
-    async def create_equipment_booking(
-        self, user_id: int, booking_data: BookingCreateEquipment
-    ) -> Booking:
-        """
-        สร้างการจองอุปกรณ์ พร้อม Transaction Locking และ Enhanced Validation
-        
-        Process:
-            1. Validate booking times (start < end, no past, duration limits)
-            2. Lock อุปกรณ์ด้วย SELECT FOR UPDATE
-            3. ตรวจสอบว่าอุปกรณ์พร้อมใช้งาน และ status
-            4. ตรวจสอบว่ามีการจองซ้ำในช่วงเวลานั้นหรือไม่
-            5. สร้างการจอง
-        
-        Args:
-            user_id: ID ของผู้จอง
-            booking_data: ข้อมูลการจอง
-        
-        Returns:
-            Booking object ที่สร้างแล้ว
-        
-        Raises:
-            ValidationException: เวลาไม่ถูกต้อง, อุปกรณ์ไม่พร้อมใช้งาน
-            NotFoundException: ไม่พบอุปกรณ์
-            ConflictException: มีการจองซ้ำในช่วงเวลานั้น
-        """
-        # 1. Validate booking times
-        self._validate_booking_times(
-            start_time=booking_data.start_time,
-            end_time=booking_data.end_time,
-            min_duration_minutes=15,
-            max_duration_hours=168,  # อุปกรณ์อาจจองได้นานกว่าห้อง (max 7 days)
-            allow_past=False,
-        )
-
-        async with self.db.begin():
-            # 2. Lock อุปกรณ์ (Pessimistic Locking)
-            equipment_query = (
-                select(Equipment)
-                .where(Equipment.id == booking_data.equipment_id)
-                .with_for_update()  # SELECT FOR UPDATE
-            )
-            result = await self.db.execute(equipment_query)
-            equipment = result.scalar_one_or_none()
-
-            if not equipment:
-                raise NotFoundException(
-                    f"Equipment ID {booking_data.equipment_id} not found"
-                )
-
-            # 3. ตรวจสอบสถานะอุปกรณ์
-            if not equipment.is_bookable:
-                raise ValidationException(
-                    f"Equipment {equipment.equipment_name} is not bookable"
-                )
-
-            if equipment.status != EquipmentStatus.AVAILABLE.value:
-                status_messages = {
-                    EquipmentStatus.IN_USE.value: "currently in use",
-                    EquipmentStatus.MAINTENANCE.value: "under maintenance",
-                    EquipmentStatus.BROKEN.value: "broken",
-                    EquipmentStatus.RETIRED.value: "retired",
-                }
-                status_msg = status_messages.get(equipment.status, equipment.status)
-                raise ValidationException(
-                    f"Equipment {equipment.equipment_name} is {status_msg} and cannot be booked"
-                )
-
-            # 4. ตรวจสอบการจองซ้ำ
-            conflict = await self._check_equipment_conflict(
-                equipment_id=booking_data.equipment_id,
-                start_time=booking_data.start_time,
-                end_time=booking_data.end_time,
-            )
-
-            if conflict:
-                raise ConflictException(
-                    f"Equipment {equipment.equipment_name} is already booked during this time slot"
-                )
-
-            # 5. สร้างการจอง
-            booking = Booking(
-                user_id=user_id,
-                equipment_id=booking_data.equipment_id,
-                title=booking_data.title,
-                description=booking_data.description,
-                purpose=booking_data.purpose,
-                start_time=booking_data.start_time,
-                end_time=booking_data.end_time,
-                contact_person=booking_data.contact_person,
-                contact_phone=booking_data.contact_phone,
-                notes=booking_data.notes,
-                status=BookingStatus.PENDING.value,
-            )
-
-            self.db.add(booking)
-            await self.db.flush()
-            await self.db.refresh(booking)
-
-            return booking
-
-    async def _check_equipment_conflict(
-        self,
-        equipment_id: int,
-        start_time: datetime,
-        end_time: datetime,
-        exclude_booking_id: Optional[int] = None,
-    ) -> bool:
-        """
-        ตรวจสอบว่ามีการจองอุปกรณ์ซ้ำในช่วงเวลานั้นหรือไม่
-        
-        Args:
-            equipment_id: ID ของอุปกรณ์
-            start_time: เวลาเริ่มต้น
-            end_time: เวลาสิ้นสุด
-            exclude_booking_id: ID ของการจองที่ต้องการยกเว้น
-        
-        Returns:
-            True ถ้ามีการจองซ้ำ
-        """
-        active_statuses = [BookingStatus.PENDING.value, BookingStatus.CONFIRMED.value]
-
-        conflict_query = select(Booking).where(
-            and_(
-                Booking.equipment_id == equipment_id,
-                Booking.status.in_(active_statuses),
-                Booking.start_time < end_time,
-                Booking.end_time > start_time,
-            )
-        )
-
-        if exclude_booking_id:
-            conflict_query = conflict_query.where(Booking.id != exclude_booking_id)
-
-        result = await self.db.execute(conflict_query)
-        conflicting_booking = result.scalar_one_or_none()
-
-        return conflicting_booking is not None
-
-    # =========================================================================
-    # Booking Management
-    # =========================================================================
-
-    async def get_booking_by_id(
-        self, booking_id: int, load_relations: bool = False
-    ) -> Booking:
-        """
-        ดึงข้อมูลการจองตาม ID
-        
-        Args:
-            booking_id: ID ของการจอง
-            load_relations: โหลด relationships (user, room, equipment)
-        
-        Returns:
-            Booking object
-        
-        Raises:
-            NotFoundException: ไม่พบการจอง
-        """
-        query = select(Booking).where(Booking.id == booking_id)
-
-        if load_relations:
-            query = query.options(
-                selectinload(Booking.user),
-                selectinload(Booking.room),
-                selectinload(Booking.equipment),
-            )
-
-        result = await self.db.execute(query)
-        booking = result.scalar_one_or_none()
-
-        if not booking:
-            raise NotFoundException(f"Booking ID {booking_id} not found")
-
-        return booking
-
-    async def get_user_bookings(
-        self,
-        user_id: int,
-        status: Optional[BookingStatus] = None,
-        limit: int = 50,
-        offset: int = 0,
-    ) -> List[Booking]:
-        """
-        ดึงรายการการจองของผู้ใช้
-        
-        Args:
-            user_id: ID ของผู้ใช้
-            status: กรองตามสถานะ (optional)
-            limit: จำนวนรายการสูงสุด
-            offset: เริ่มต้นจากรายการที่
-        
-        Returns:
-            List of Booking objects
-        """
-        query = (
-            select(Booking)
-            .where(Booking.user_id == user_id)
-            .order_by(Booking.start_time.desc())
-            .limit(limit)
-            .offset(offset)
-        )
-
-        if status:
-            query = query.where(Booking.status == status.value)
-
-        result = await self.db.execute(query)
-        return result.scalars().all()
-
-    async def approve_booking(
-        self, booking_id: int, approved_by: int, notes: Optional[str] = None
-    ) -> Booking:
-        """
-        อนุมัติการจอง (สำหรับ Staff/Admin)
-        
-        Args:
-            booking_id: ID ของการจอง
-            approved_by: ID ของผู้อนุมัติ
-            notes: หมายเหตุเพิ่มเติม
-        
-        Returns:
-            Updated Booking object
-        
-        Raises:
-            NotFoundException: ไม่พบการจอง
-            ValidationException: ไม่สามารถอนุมัติได้ (สถานะไม่ถูกต้อง)
-        """
-        booking = await self.get_booking_by_id(booking_id)
-
-        if booking.status != BookingStatus.PENDING.value:
+        # 3) สถานะทรัพยากรและความจุ
+        if not resource.is_bookable or resource.status != target.available_status:
             raise ValidationException(
-                f"Cannot approve booking with status: {booking.status}"
+                f"{target.label} is not available for booking (status: {resource.status})"
             )
-
-        booking.status = BookingStatus.CONFIRMED.value
-        booking.approved_by = approved_by
-        booking.approved_at = datetime.utcnow()
-        if notes:
-            booking.notes = notes
-
-        await self.db.commit()
-        await self.db.refresh(booking)
-
-        return booking
-
-    async def reject_booking(
-        self, booking_id: int, rejection_reason: str
-    ) -> Booking:
-        """
-        ปฏิเสธการจอง
-        
-        Args:
-            booking_id: ID ของการจอง
-            rejection_reason: เหตุผลที่ปฏิเสธ
-        
-        Returns:
-            Updated Booking object
-        """
-        booking = await self.get_booking_by_id(booking_id)
-
-        if booking.status != BookingStatus.PENDING.value:
-            raise ValidationException(
-                f"Cannot reject booking with status: {booking.status}"
-            )
-
-        booking.status = BookingStatus.REJECTED.value
-        booking.rejection_reason = rejection_reason
-
-        await self.db.commit()
-        await self.db.refresh(booking)
-
-        return booking
-
-    async def cancel_booking(
-        self, booking_id: int, user_id: int, cancellation_reason: str
-    ) -> Booking:
-        """
-        ยกเลิกการจอง (โดยผู้จอง)
-        
-        Args:
-            booking_id: ID ของการจอง
-            user_id: ID ของผู้ใช้ (ต้องเป็นเจ้าของการจอง)
-            cancellation_reason: เหตุผลที่ยกเลิก
-        
-        Returns:
-            Updated Booking object
-        
-        Raises:
-            NotFoundException: ไม่พบการจอง
-            ValidationException: ไม่มีสิทธิ์ยกเลิก หรือสถานะไม่ถูกต้อง
-        """
-        booking = await self.get_booking_by_id(booking_id)
-
-        # ตรวจสอบว่าเป็นเจ้าของการจองหรือไม่
-        if booking.user_id != user_id:
-            raise ValidationException("You can only cancel your own bookings")
-
-        # ตรวจสอบสถานะ
-        if booking.status not in [
-            BookingStatus.PENDING.value,
-            BookingStatus.CONFIRMED.value,
-        ]:
-            raise ValidationException(
-                f"Cannot cancel booking with status: {booking.status}"
-            )
-
-        booking.status = BookingStatus.CANCELLED.value
-        booking.cancellation_reason = cancellation_reason
-
-        await self.db.commit()
-        await self.db.refresh(booking)
-
-        return booking
-
-    # =========================================================================
-    # Availability Check
-    # =========================================================================
-
-    async def check_room_availability(
-        self, room_id: int, start_time: datetime, end_time: datetime
-    ) -> bool:
-        """
-        ตรวจสอบว่าห้องว่างในช่วงเวลาที่ระบุหรือไม่
-        
-        Args:
-            room_id: ID ของห้อง
-            start_time: เวลาเริ่มต้น
-            end_time: เวลาสิ้นสุด
-        
-        Returns:
-            True ถ้าห้องว่าง, False ถ้าไม่ว่าง
-        """
-        # ตรวจสอบว่าห้องพร้อมใช้งาน
-        room = await self.db.get(Room, room_id)
-        if not room or not room.is_bookable or room.status != RoomStatus.AVAILABLE.value:
-            return False
-
-        # ตรวจสอบการจองซ้ำ
-        conflict = await self._check_room_conflict(room_id, start_time, end_time)
-        return not conflict
-
-    async def check_equipment_availability(
-        self, equipment_id: int, start_time: datetime, end_time: datetime
-    ) -> bool:
-        """
-        ตรวจสอบว่าอุปกรณ์ว่างในช่วงเวลาที่ระบุหรือไม่
-        
-        Args:
-            equipment_id: ID ของอุปกรณ์
-            start_time: เวลาเริ่มต้น
-            end_time: เวลาสิ้นสุด
-        
-        Returns:
-            True ถ้าอุปกรณ์ว่าง, False ถ้าไม่ว่าง
-        """
-        # ตรวจสอบว่าอุปกรณ์พร้อมใช้งาน
-        equipment = await self.db.get(Equipment, equipment_id)
         if (
-            not equipment
-            or not equipment.is_bookable
-            or equipment.status != EquipmentStatus.AVAILABLE.value
+            target is ROOM
+            and data.attendees_count is not None
+            and data.attendees_count > resource.capacity
         ):
-            return False
+            raise ValidationException(
+                f"attendees_count ({data.attendees_count}) exceeds room capacity "
+                f"({resource.capacity})"
+            )
 
-        # ตรวจสอบการจองซ้ำ
-        conflict = await self._check_equipment_conflict(
-            equipment_id, start_time, end_time
+        # 4) หาการจองที่ทับเวลา
+        if await self._has_overlap(target, resource_id, start, end):
+            raise ConflictException(f"{target.label} is already booked for this time slot")
+
+        # 5) insert เป็น pending แล้ว commit (ปล่อยล็อก)
+        fields = data.model_dump(exclude={"start_time", "end_time", "room_id", "equipment_id"})
+        booking = Booking(
+            **fields,
+            user_id=user.id,
+            room_id=resource_id if target is ROOM else None,
+            equipment_id=resource_id if target is EQUIPMENT else None,
+            start_time=start,
+            end_time=end,
+            status=BookingStatus.PENDING.value,
         )
-        return not conflict
+        self.db.add(booking)
+        await self._flush_or_conflict(target.label)
+        notify_booking(self.db, booking, NotificationType.BOOKING_CREATED)
+        await self.db.commit()
+        await self.db.refresh(booking)
+        return booking
+
+    async def _has_overlap(
+        self,
+        target: _Target,
+        resource_id: int,
+        start: datetime,
+        end: datetime,
+        exclude_booking_id: int | None = None,
+    ) -> bool:
+        query = select(Booking.id).where(
+            target.column == resource_id,
+            Booking.status.in_(ACTIVE_BOOKING_STATUSES),
+            Booking.start_time < end,
+            Booking.end_time > start,
+        )
+        if exclude_booking_id is not None:
+            query = query.where(Booking.id != exclude_booking_id)
+        return bool(await self.db.scalar(select(query.exists())))
+
+    async def _flush_or_conflict(self, label: str) -> None:
+        try:
+            await self.db.flush()
+        except IntegrityError as exc:
+            await self.db.rollback()
+            if _is_exclusion_violation(exc):
+                raise ConflictException(f"{label} is already booked for this time slot") from exc
+            raise
+
+    # ------------------------------------------------------------------ query
+    async def _get_for_update(self, booking_id: int) -> Booking:
+        booking = await self.db.scalar(
+            select(Booking).where(Booking.id == booking_id).with_for_update()
+        )
+        if booking is None:
+            raise NotFoundException("Booking not found")
+        return booking
+
+    async def get_booking(self, user: User, booking_id: int) -> Booking:
+        booking = await self.db.get(Booking, booking_id)
+        if booking is None:
+            raise NotFoundException("Booking not found")
+        if booking.user_id != user.id and user.role not in STAFF_ROLES:
+            raise ForbiddenException("You can only view your own bookings")
+        return booking
+
+    async def list_bookings(
+        self,
+        params: PageParams,
+        user_id: int | None = None,
+        status: BookingStatus | None = None,
+        room_id: int | None = None,
+        equipment_id: int | None = None,
+        start_from: datetime | None = None,
+        start_to: datetime | None = None,
+    ) -> tuple[list[Booking], int]:
+        query = select(Booking)
+        if user_id is not None:
+            query = query.where(Booking.user_id == user_id)
+        if status is not None:
+            query = query.where(Booking.status == status.value)
+        if room_id is not None:
+            query = query.where(Booking.room_id == room_id)
+        if equipment_id is not None:
+            query = query.where(Booking.equipment_id == equipment_id)
+        if start_from is not None:
+            query = query.where(Booking.start_time >= _utc(start_from))
+        if start_to is not None:
+            query = query.where(Booking.start_time < _utc(start_to))
+        total = await self.db.scalar(select(func.count()).select_from(query.subquery()))
+        rows = await self.db.scalars(
+            query.order_by(Booking.start_time.desc(), Booking.id.desc())
+            .offset(params.offset)
+            .limit(params.page_size)
+        )
+        return list(rows), total or 0
+
+    async def availability(
+        self, target_name: str, resource_id: int, start: datetime, end: datetime
+    ) -> dict:
+        target = ROOM if target_name == "room" else EQUIPMENT
+        start, end = _utc(start), _utc(end)
+        if start >= end:
+            raise ValidationException("start_time must be before end_time")
+        if end - start > timedelta(days=31):
+            raise ValidationException("Availability window cannot exceed 31 days")
+        resource = await self.db.get(target.model, resource_id)
+        if resource is None:
+            raise NotFoundException(f"{target.label} not found")
+        rows = await self.db.execute(
+            select(Booking.start_time, Booking.end_time)
+            .where(
+                target.column == resource_id,
+                Booking.status.in_(ACTIVE_BOOKING_STATUSES),
+                Booking.start_time < end,
+                Booking.end_time > start,
+            )
+            .order_by(Booking.start_time)
+        )
+        busy = [{"start_time": s, "end_time": e} for s, e in rows.all()]
+        bookable = resource.is_bookable and resource.status == target.available_status
+        return {
+            "available": bookable and not busy,
+            "resource_type": target_name,
+            "resource_id": resource_id,
+            "start_time": start,
+            "end_time": end,
+            "busy_slots": busy,
+        }
+
+    # ------------------------------------------------------------- workflow
+    async def approve(self, staff: User, booking_id: int) -> Booking:
+        booking = await self._get_for_update(booking_id)
+        if booking.status != BookingStatus.PENDING.value:
+            raise ValidationException(
+                f"Only pending bookings can be approved (is {booking.status})"
+            )
+        booking.status = BookingStatus.CONFIRMED.value
+        booking.approved_by = staff.id
+        booking.approved_at = datetime.now(UTC)
+        notify_booking(self.db, booking, NotificationType.BOOKING_CONFIRMED)
+        await self.db.commit()
+        await self.db.refresh(booking)
+        return booking
+
+    async def reject(self, staff: User, booking_id: int, reason: str) -> Booking:
+        booking = await self._get_for_update(booking_id)
+        if booking.status != BookingStatus.PENDING.value:
+            raise ValidationException(
+                f"Only pending bookings can be rejected (is {booking.status})"
+            )
+        booking.status = BookingStatus.REJECTED.value
+        booking.rejection_reason = reason
+        booking.approved_by = staff.id
+        booking.approved_at = datetime.now(UTC)
+        notify_booking(self.db, booking, NotificationType.BOOKING_REJECTED, reason)
+        await self.db.commit()
+        await self.db.refresh(booking)
+        return booking
+
+    async def cancel(self, user: User, booking_id: int, reason: str) -> Booking:
+        booking = await self._get_for_update(booking_id)
+        is_staff = user.role in STAFF_ROLES
+        if booking.user_id != user.id and not is_staff:
+            raise ForbiddenException("You can only cancel your own bookings")
+        if booking.status not in ACTIVE_BOOKING_STATUSES:
+            raise ValidationException(f"Booking cannot be cancelled (is {booking.status})")
+        if not is_staff and booking.start_time <= datetime.now(UTC):
+            raise ValidationException("Bookings that have already started cannot be cancelled")
+        booking.status = BookingStatus.CANCELLED.value
+        booking.cancellation_reason = reason
+        notify_booking(self.db, booking, NotificationType.BOOKING_CANCELLED, reason)
+        await self.db.commit()
+        await self.db.refresh(booking)
+        return booking

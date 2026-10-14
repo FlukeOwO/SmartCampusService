@@ -12,7 +12,9 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    text,
 )
+from sqlalchemy.dialects.postgresql import ExcludeConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.common.base_models import TimestampMixin
@@ -23,11 +25,11 @@ from app.core.database import Base
 class Booking(Base, TimestampMixin):
     """
     Booking Model - การจองห้องหรืออุปกรณ์
-    
+
     Notes:
         - ต้องระบุ room_id หรือ equipment_id (อย่างใดอย่างหนึ่งหรือทั้งคู่)
         - มีระบบ Locking เพื่อป้องกัน Double Booking
-    
+
     Relationships:
         - user: ผู้จอง
         - room: ห้องที่จอง (optional)
@@ -60,15 +62,11 @@ class Booking(Base, TimestampMixin):
     )
 
     # Booking Details
-    title: Mapped[str] = mapped_column(
-        String(255), nullable=False, comment="หัวข้อการจอง"
-    )
+    title: Mapped[str] = mapped_column(String(255), nullable=False, comment="หัวข้อการจอง")
     description: Mapped[str | None] = mapped_column(
         Text, nullable=True, comment="รายละเอียดการจอง/วัตถุประสงค์"
     )
-    purpose: Mapped[str | None] = mapped_column(
-        String(255), nullable=True, comment="วัตถุประสงค์"
-    )
+    purpose: Mapped[str | None] = mapped_column(String(255), nullable=True, comment="วัตถุประสงค์")
 
     # Time Slot (ช่วงเวลาที่จอง)
     start_time: Mapped[datetime] = mapped_column(
@@ -94,17 +92,13 @@ class Booking(Base, TimestampMixin):
     approved_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, comment="เวลาที่อนุมัติ"
     )
-    rejection_reason: Mapped[str | None] = mapped_column(
-        Text, nullable=True, comment="เหตุผลที่ปฏิเสธ"
-    )
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True, comment="เหตุผลที่ปฏิเสธ")
     cancellation_reason: Mapped[str | None] = mapped_column(
         Text, nullable=True, comment="เหตุผลที่ยกเลิก"
     )
 
     # Contact Information
-    contact_person: Mapped[str | None] = mapped_column(
-        String(255), nullable=True, comment="ผู้ติดต่อ"
-    )
+    contact_person: Mapped[str | None] = mapped_column(String(255), nullable=True, comment="ผู้ติดต่อ")
     contact_phone: Mapped[str | None] = mapped_column(
         String(20), nullable=True, comment="เบอร์โทรติดต่อ"
     )
@@ -113,14 +107,12 @@ class Booking(Base, TimestampMixin):
     attendees_count: Mapped[int | None] = mapped_column(
         Integer, nullable=True, comment="จำนวนผู้เข้าร่วม (สำหรับจองห้อง)"
     )
-    notes: Mapped[str | None] = mapped_column(
-        Text, nullable=True, comment="หมายเหตุเพิ่มเติม"
-    )
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True, comment="หมายเหตุเพิ่มเติม")
 
     # Relationships
-    user: Mapped["User"] = relationship("User", back_populates="bookings")
-    room: Mapped["Room"] = relationship("Room", back_populates="bookings")
-    equipment: Mapped["Equipment"] = relationship("Equipment", back_populates="bookings")
+    user: Mapped["User"] = relationship("User", back_populates="bookings", foreign_keys=[user_id])
+    room: Mapped["Room | None"] = relationship("Room", back_populates="bookings")
+    equipment: Mapped["Equipment | None"] = relationship("Equipment", back_populates="bookings")
 
     # Constraints
     __table_args__ = (
@@ -136,6 +128,21 @@ class Booking(Base, TimestampMixin):
         Index("ix_bookings_equipment_time", "equipment_id", "start_time", "end_time", "status"),
         Index("ix_bookings_user_status", "user_id", "status"),
         Index("ix_bookings_status_time", "status", "start_time"),
+        # ชั้นที่ 2 กันจองซ้อน: DB ปฏิเสธช่วงเวลาที่ทับกันเองแม้โค้ดจะพลาด (ต้องมี btree_gist)
+        ExcludeConstraint(
+            ("room_id", "="),
+            (text("tstzrange(start_time, end_time, '[)')"), "&&"),
+            name="no_overlap_room",
+            using="gist",
+            where=text("room_id IS NOT NULL AND status IN ('pending', 'confirmed')"),
+        ),
+        ExcludeConstraint(
+            ("equipment_id", "="),
+            (text("tstzrange(start_time, end_time, '[)')"), "&&"),
+            name="no_overlap_equipment",
+            using="gist",
+            where=text("equipment_id IS NOT NULL AND status IN ('pending', 'confirmed')"),
+        ),
     )
 
     def __repr__(self) -> str:

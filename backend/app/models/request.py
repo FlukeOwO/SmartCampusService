@@ -15,7 +15,7 @@ from app.core.database import Base
 class Request(Base, TimestampMixin):
     """
     Request Model - คำร้อง/การแจ้งปัญหา
-    
+
     Relationships:
         - user: ผู้ส่งคำร้อง
         - assigned_staff: เจ้าหน้าที่ที่รับผิดชอบ
@@ -45,12 +45,8 @@ class Request(Base, TimestampMixin):
     request_number: Mapped[str] = mapped_column(
         String(50), unique=True, index=True, nullable=False, comment="เลขที่คำร้อง (auto-generated)"
     )
-    title: Mapped[str] = mapped_column(
-        String(255), nullable=False, comment="หัวข้อคำร้อง"
-    )
-    description: Mapped[str] = mapped_column(
-        Text, nullable=False, comment="รายละเอียดคำร้อง"
-    )
+    title: Mapped[str] = mapped_column(String(255), nullable=False, comment="หัวข้อคำร้อง")
+    description: Mapped[str] = mapped_column(Text, nullable=False, comment="รายละเอียดคำร้อง")
     request_type: Mapped[str] = mapped_column(
         String(50),
         nullable=False,
@@ -82,9 +78,7 @@ class Request(Base, TimestampMixin):
         index=True,
         comment="สถานะ: pending, in_progress, completed, rejected, cancelled",
     )
-    status_notes: Mapped[str | None] = mapped_column(
-        Text, nullable=True, comment="หมายเหตุสถานะ"
-    )
+    status_notes: Mapped[str | None] = mapped_column(Text, nullable=True, comment="หมายเหตุสถานะ")
 
     # Timestamps
     assigned_at: Mapped[datetime | None] = mapped_column(
@@ -104,17 +98,11 @@ class Request(Base, TimestampMixin):
     resolution: Mapped[str | None] = mapped_column(
         Text, nullable=True, comment="วิธีการแก้ไข/ผลการดำเนินการ"
     )
-    rejection_reason: Mapped[str | None] = mapped_column(
-        Text, nullable=True, comment="เหตุผลที่ปฏิเสธ"
-    )
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True, comment="เหตุผลที่ปฏิเสธ")
 
     # Rating & Feedback (หลังจากเสร็จสิ้น)
-    rating: Mapped[int | None] = mapped_column(
-        nullable=True, comment="คะแนนความพึงพอใจ (1-5)"
-    )
-    feedback: Mapped[str | None] = mapped_column(
-        Text, nullable=True, comment="ความคิดเห็นเพิ่มเติม"
-    )
+    rating: Mapped[int | None] = mapped_column(nullable=True, comment="คะแนนความพึงพอใจ (1-5)")
+    feedback: Mapped[str | None] = mapped_column(Text, nullable=True, comment="ความคิดเห็นเพิ่มเติม")
 
     # Relationships
     user: Mapped["User"] = relationship(
@@ -122,7 +110,7 @@ class Request(Base, TimestampMixin):
         foreign_keys=[user_id],
         back_populates="requests",
     )
-    assigned_staff: Mapped["User"] = relationship(
+    assigned_staff: Mapped["User | None"] = relationship(
         "User",
         foreign_keys=[assigned_staff_id],
     )
@@ -166,21 +154,13 @@ class RequestAttachment(Base, TimestampMixin):
     )
 
     # File Information
-    filename: Mapped[str] = mapped_column(
-        String(255), nullable=False, comment="ชื่อไฟล์"
-    )
+    filename: Mapped[str] = mapped_column(String(255), nullable=False, comment="ชื่อไฟล์")
     file_path: Mapped[str] = mapped_column(
         String(500), nullable=False, comment="Path ของไฟล์ในระบบ storage"
     )
-    file_url: Mapped[str] = mapped_column(
-        String(500), nullable=False, comment="URL สำหรับเข้าถึงไฟล์"
-    )
-    file_size: Mapped[int] = mapped_column(
-        nullable=False, comment="ขนาดไฟล์ (bytes)"
-    )
-    file_type: Mapped[str | None] = mapped_column(
-        String(100), nullable=True, comment="MIME type"
-    )
+    file_url: Mapped[str] = mapped_column(String(500), nullable=False, comment="URL สำหรับเข้าถึงไฟล์")
+    file_size: Mapped[int] = mapped_column(nullable=False, comment="ขนาดไฟล์ (bytes)")
+    file_type: Mapped[str | None] = mapped_column(String(100), nullable=True, comment="MIME type")
 
     # Relationships
     request: Mapped["Request"] = relationship(

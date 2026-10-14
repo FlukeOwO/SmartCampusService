@@ -1,531 +1,281 @@
 """
-Request Service - Business Logic สำหรับ Request Management
+Request service - คำร้อง/แจ้งปัญหา, ไฟล์แนบ, มอบหมายงาน
+
+สิทธิ์ระดับข้อมูล: นักศึกษาเห็น/แก้ได้เฉพาะคำร้องของตัวเอง, staff/admin เห็นทั้งหมด
+ไฟล์แนบเก็บที่ requests/{request_id}/{uuid}.{ext} ใน bucket private
 """
 
-from datetime import datetime
-from typing import Optional
+import logging
+import secrets
+import uuid
+from datetime import UTC, datetime
 
 from fastapi import UploadFile
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.common.base_models import PageParams
 from app.common.constants import (
-    ALLOWED_DOCUMENT_EXTENSIONS,
-    ALLOWED_IMAGE_EXTENSIONS,
-    MAX_DOCUMENT_SIZE_MB,
-    MAX_IMAGE_SIZE_MB,
+    REQUEST_STATUS_TRANSITIONS,
+    STAFF_ROLES,
     RequestPriority,
     RequestStatus,
     RequestType,
-    UserRole,
 )
 from app.common.exceptions import (
     ForbiddenException,
     NotFoundException,
     ValidationException,
 )
-from app.common.storage import get_file_extension, get_storage_service, validate_file_type
+from app.common.storage import get_storage, read_validated_upload
+from app.core.config import settings
 from app.models import Request, RequestAttachment, User
-from app.schemas.request import RequestCreate, RequestUpdate, RequestUpdateStatus
+from app.modules.notifications.service import (
+    notify_request_assigned,
+    notify_request_created,
+    notify_request_status,
+)
+from app.schemas.request import (
+    RequestAssign,
+    RequestCreate,
+    RequestFeedback,
+    RequestUpdate,
+    RequestUpdateStatus,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def _new_request_number() -> str:
+    return f"REQ-{datetime.now(UTC):%Y%m%d}-{secrets.token_hex(3).upper()}"
+
+
+def _is_staff(user: User) -> bool:
+    return user.role in STAFF_ROLES
 
 
 class RequestService:
-    """Service สำหรับจัดการ Requests"""
-
     def __init__(self, db: AsyncSession):
         self.db = db
-        self.storage = get_storage_service()
 
-    # ========================================================================
-    # Helper Methods
-    # ========================================================================
-
-    def _generate_request_number(self) -> str:
-        """
-        สร้างเลขที่คำร้องแบบ unique
-        Format: REQ-YYYYMMDD-XXXXXX (XXXXXX = random 6 digits)
-        """
-        import random
-
-        timestamp = datetime.utcnow().strftime("%Y%m%d")
-        random_digits = "".join([str(random.randint(0, 9)) for _ in range(6)])
-        return f"REQ-{timestamp}-{random_digits}"
-
-    async def _get_request_by_id(
-        self, request_id: int, with_attachments: bool = False
-    ) -> Request:
-        """ดึง Request โดย ID"""
-        query = select(Request).where(Request.id == request_id)
-
-        if with_attachments:
-            query = query.options(selectinload(Request.attachments))
-
-        result = await self.db.execute(query)
-        request = result.scalar_one_or_none()
-
-        if not request:
-            raise NotFoundException(f"Request with ID {request_id} not found")
-
+    # ----------------------------------------------------------------- load
+    async def _load(self, request_id: int, for_update: bool = False) -> Request:
+        query = (
+            select(Request)
+            .where(Request.id == request_id)
+            .options(selectinload(Request.attachments))
+            .execution_options(populate_existing=True)
+        )
+        if for_update:
+            query = query.with_for_update(of=Request)
+        request = await self.db.scalar(query)
+        if request is None:
+            raise NotFoundException("Request not found")
         return request
 
-    def _can_user_access_request(self, request: Request, user: User) -> bool:
-        """ตรวจสอบว่า User สามารถเข้าถึง Request นี้ได้หรือไม่"""
-        # Admin และ Staff เข้าถึงได้ทั้งหมด
-        if user.role in [UserRole.ADMIN.value, UserRole.STAFF.value]:
-            return True
+    async def _load_accessible(self, user: User, request_id: int, for_update: bool = False):
+        request = await self._load(request_id, for_update)
+        if request.user_id != user.id and not _is_staff(user):
+            raise ForbiddenException("You can only access your own requests")
+        return request
 
-        # Student เข้าถึงได้เฉพาะของตัวเอง
-        return request.user_id == user.id
-
-    def _can_user_modify_request(self, request: Request, user: User) -> bool:
-        """ตรวจสอบว่า User สามารถแก้ไข Request ได้หรือไม่"""
-        # เฉพาะเจ้าของ Request แก้ไขได้ และต้องเป็นสถานะ PENDING หรือ REJECTED
+    async def _load_owned(self, user: User, request_id: int) -> Request:
+        request = await self._load(request_id, for_update=True)
         if request.user_id != user.id:
-            return False
+            raise ForbiddenException("You can only modify your own requests")
+        return request
 
-        return request.status in [RequestStatus.PENDING.value, RequestStatus.REJECTED.value]
+    async def get(self, user: User, request_id: int) -> Request:
+        return await self._load_accessible(user, request_id)
 
-    # ========================================================================
-    # Create Request
-    # ========================================================================
+    async def _commit_and_reload(self, request_id: int) -> Request:
+        await self.db.commit()
+        return await self._load(request_id)
 
-    async def create_request(
-        self,
-        request_data: RequestCreate,
-        user: User,
-        files: list[UploadFile] | None = None,
-    ) -> Request:
-        """
-        สร้าง Request ใหม่
-        
-        Args:
-            request_data: ข้อมูล Request
-            user: ผู้สร้าง Request
-            files: ไฟล์แนบ (optional)
-        
-        Returns:
-            Request object ที่สร้างแล้ว
-        """
-        # สร้าง Request object
+    # --------------------------------------------------------------- create
+    async def create(self, user: User, data: RequestCreate, files: list[UploadFile]) -> Request:
+        if len(files) > settings.MAX_FILES_PER_REQUEST:
+            raise ValidationException(f"At most {settings.MAX_FILES_PER_REQUEST} files per request")
+        # ตรวจไฟล์ทั้งหมดก่อนแตะ DB
+        uploads = [await read_validated_upload(f) + (f.filename or "file",) for f in files]
+
         request = Request(
+            **{k: getattr(v, "value", v) for k, v in data.model_dump().items()},
             user_id=user.id,
-            request_number=self._generate_request_number(),
-            title=request_data.title,
-            description=request_data.description,
-            request_type=request_data.request_type.value,
-            priority=request_data.priority.value,
-            location=request_data.location,
-            contact_phone=request_data.contact_phone,
+            request_number=_new_request_number(),
             status=RequestStatus.PENDING.value,
         )
-
         self.db.add(request)
-        await self.db.flush()  # เพื่อให้ได้ request.id
+        try:
+            await self.db.flush()
+        except IntegrityError:
+            # request_number ชนกัน (โอกาสน้อยมาก) - ลองอีกครั้งด้วยเลขใหม่
+            await self.db.rollback()
+            request.request_number = _new_request_number()
+            self.db.add(request)
+            await self.db.flush()
 
-        # Upload files ถ้ามี
-        if files:
-            for file in files:
-                await self._add_attachment(request, file)
+        saved_keys = await self._store_files(request.id, uploads)
+        notify_request_created(self.db, request)
+        try:
+            return await self._commit_and_reload(request.id)
+        except Exception:
+            await self._cleanup(saved_keys)
+            raise
 
-        await self.db.commit()
-        await self.db.refresh(request)
+    # ---------------------------------------------------------- attachments
+    async def add_attachments(self, user: User, request_id: int, files: list[UploadFile]):
+        request = await self._load_owned(user, request_id)
+        if request.status not in (RequestStatus.PENDING.value, RequestStatus.IN_PROGRESS.value):
+            raise ValidationException("Cannot attach files to a closed request")
+        if not files:
+            raise ValidationException("No files provided")
+        if len(request.attachments) + len(files) > settings.MAX_FILES_PER_REQUEST:
+            raise ValidationException(f"At most {settings.MAX_FILES_PER_REQUEST} files per request")
+        uploads = [await read_validated_upload(f) + (f.filename or "file",) for f in files]
+        saved_keys = await self._store_files(request.id, uploads)
+        try:
+            return await self._commit_and_reload(request.id)
+        except Exception:
+            await self._cleanup(saved_keys)
+            raise
 
-        # Load relationships
-        await self.db.refresh(request, ["attachments"])
+    async def _store_files(self, request_id: int, uploads) -> list[str]:
+        storage = get_storage()
+        saved: list[str] = []
+        try:
+            for data, ext, content_type, original_name in uploads:
+                key = f"requests/{request_id}/{uuid.uuid4().hex}{ext}"
+                await storage.save(key, data, content_type)
+                saved.append(key)
+                self.db.add(
+                    RequestAttachment(
+                        request_id=request_id,
+                        filename=original_name[:255],
+                        file_path=key,
+                        file_url="",  # ไม่เก็บ public URL - ขอ signed URL ตอนเปิดไฟล์
+                        file_size=len(data),
+                        file_type=content_type,
+                    )
+                )
+            await self.db.flush()
+        except Exception:
+            await self._cleanup(saved)
+            raise
+        return saved
 
-        return request
+    async def _cleanup(self, keys: list[str]) -> None:
+        storage = get_storage()
+        for key in keys:
+            await storage.delete(key)
 
-    # ========================================================================
-    # File Attachment
-    # ========================================================================
+    async def attachment_url(self, user: User, request_id: int, attachment_id: int) -> str:
+        request = await self._load_accessible(user, request_id)
+        attachment = next((a for a in request.attachments if a.id == attachment_id), None)
+        if attachment is None:
+            raise NotFoundException("Attachment not found")
+        return await get_storage().signed_url(attachment.file_path, attachment.filename)
 
-    async def _add_attachment(self, request: Request, file: UploadFile) -> RequestAttachment:
-        """
-        เพิ่มไฟล์แนบให้กับ Request
-        
-        Args:
-            request: Request object
-            file: UploadFile
-        
-        Returns:
-            RequestAttachment object
-        
-        Raises:
-            ValidationException: ถ้าไฟล์ไม่ถูกต้อง
-        """
-        # ตรวจสอบ file extension
-        allowed_extensions = ALLOWED_IMAGE_EXTENSIONS + ALLOWED_DOCUMENT_EXTENSIONS
-        if not validate_file_type(file.filename or "", allowed_extensions):
-            raise ValidationException(
-                f"Invalid file type. Allowed: {', '.join(allowed_extensions)}"
-            )
-
-        # ตรวจสอบขนาดไฟล์
-        ext = get_file_extension(file.filename or "")
-        max_size = (
-            MAX_IMAGE_SIZE_MB
-            if ext in ALLOWED_IMAGE_EXTENSIONS
-            else MAX_DOCUMENT_SIZE_MB
-        )
-
-        # Upload file
-        upload_result = await self.storage.upload(
-            file=file,
-            folder=f"requests/{request.id}",
-            max_size_mb=max_size,
-        )
-
-        # สร้าง RequestAttachment
-        attachment = RequestAttachment(
-            request_id=request.id,
-            filename=upload_result["filename"],
-            file_path=upload_result["path"],
-            file_url=upload_result["url"],
-            file_size=upload_result["size"],
-            file_type=file.content_type,
-        )
-
-        self.db.add(attachment)
-        return attachment
-
-    async def add_attachments_to_request(
+    # ----------------------------------------------------------------- list
+    async def list(
         self,
-        request_id: int,
-        user: User,
-        files: list[UploadFile],
-    ) -> Request:
-        """
-        เพิ่มไฟล์แนบให้กับ Request ที่มีอยู่แล้ว
-        
-        Args:
-            request_id: ID ของ Request
-            user: User ที่เพิ่มไฟล์
-            files: ไฟล์แนบ
-        
-        Returns:
-            Request object ที่อัปเดตแล้ว
-        """
-        request = await self._get_request_by_id(request_id, with_attachments=True)
-
-        # ตรวจสอบสิทธิ์
-        if not self._can_user_modify_request(request, user):
-            raise ForbiddenException("You cannot add attachments to this request")
-
-        # เพิ่มไฟล์
-        for file in files:
-            await self._add_attachment(request, file)
-
-        await self.db.commit()
-        await self.db.refresh(request, ["attachments"])
-
-        return request
-
-    # ========================================================================
-    # Get Requests
-    # ========================================================================
-
-    async def get_request_by_id(self, request_id: int, user: User) -> Request:
-        """
-        ดึงข้อมูล Request โดย ID
-        
-        Args:
-            request_id: ID ของ Request
-            user: User ที่ขอข้อมูล
-        
-        Returns:
-            Request object
-        """
-        request = await self._get_request_by_id(request_id, with_attachments=True)
-
-        # ตรวจสอบสิทธิ์
-        if not self._can_user_access_request(request, user):
-            raise ForbiddenException("You do not have permission to access this request")
-
-        return request
-
-    async def get_user_requests(
-        self,
-        user: User,
-        status: Optional[RequestStatus] = None,
-        request_type: Optional[RequestType] = None,
-        priority: Optional[RequestPriority] = None,
-        skip: int = 0,
-        limit: int = 20,
+        params: PageParams,
+        user_id: int | None = None,
+        status: RequestStatus | None = None,
+        request_type: RequestType | None = None,
+        priority: RequestPriority | None = None,
+        assigned_staff_id: int | None = None,
+        search: str | None = None,
     ) -> tuple[list[Request], int]:
-        """
-        ดึงรายการ Requests ของ User
-        
-        Args:
-            user: User
-            status: Filter by status (optional)
-            request_type: Filter by type (optional)
-            priority: Filter by priority (optional)
-            skip: Pagination offset
-            limit: Pagination limit
-        
-        Returns:
-            Tuple of (requests, total_count)
-        """
-        # Build query
-        query = select(Request).where(Request.user_id == user.id)
-
-        # Apply filters
-        if status:
-            query = query.where(Request.status == status.value)
-        if request_type:
-            query = query.where(Request.request_type == request_type.value)
-        if priority:
-            query = query.where(Request.priority == priority.value)
-
-        # Count total
-        count_query = select(func.count()).select_from(query.subquery())
-        total = await self.db.scalar(count_query) or 0
-
-        # Apply pagination and ordering
-        query = query.order_by(Request.created_at.desc()).offset(skip).limit(limit)
-
-        result = await self.db.execute(query)
-        requests = list(result.scalars().all())
-
-        return requests, total
-
-    async def get_all_requests(
-        self,
-        status: Optional[RequestStatus] = None,
-        request_type: Optional[RequestType] = None,
-        priority: Optional[RequestPriority] = None,
-        assigned_staff_id: Optional[int] = None,
-        search: Optional[str] = None,
-        skip: int = 0,
-        limit: int = 20,
-    ) -> tuple[list[Request], int]:
-        """
-        ดึงรายการ Requests ทั้งหมด (สำหรับ Staff/Admin)
-        
-        Args:
-            status: Filter by status (optional)
-            request_type: Filter by type (optional)
-            priority: Filter by priority (optional)
-            assigned_staff_id: Filter by assigned staff (optional)
-            search: Search in title/description (optional)
-            skip: Pagination offset
-            limit: Pagination limit
-        
-        Returns:
-            Tuple of (requests, total_count)
-        """
-        # Build query
         query = select(Request)
-
-        # Apply filters
-        if status:
+        if user_id is not None:
+            query = query.where(Request.user_id == user_id)
+        if status is not None:
             query = query.where(Request.status == status.value)
-        if request_type:
+        if request_type is not None:
             query = query.where(Request.request_type == request_type.value)
-        if priority:
+        if priority is not None:
             query = query.where(Request.priority == priority.value)
-        if assigned_staff_id:
+        if assigned_staff_id is not None:
             query = query.where(Request.assigned_staff_id == assigned_staff_id)
         if search:
-            search_pattern = f"%{search}%"
+            pattern = f"%{search}%"
             query = query.where(
-                or_(
-                    Request.title.ilike(search_pattern),
-                    Request.description.ilike(search_pattern),
-                    Request.request_number.ilike(search_pattern),
-                )
+                Request.title.ilike(pattern) | Request.request_number.ilike(pattern)
             )
+        total = await self.db.scalar(select(func.count()).select_from(query.subquery()))
+        rows = await self.db.scalars(
+            query.order_by(Request.created_at.desc(), Request.id.desc())
+            .offset(params.offset)
+            .limit(params.page_size)
+        )
+        return list(rows), total or 0
 
-        # Count total
-        count_query = select(func.count()).select_from(query.subquery())
-        total = await self.db.scalar(count_query) or 0
+    # --------------------------------------------------------------- update
+    async def update(self, user: User, request_id: int, data: RequestUpdate) -> Request:
+        request = await self._load_owned(user, request_id)
+        if request.status != RequestStatus.PENDING.value:
+            raise ValidationException("Only pending requests can be edited")
+        for field, value in data.model_dump(exclude_unset=True).items():
+            if value is None and field in {"title", "description", "request_type", "priority"}:
+                continue
+            setattr(request, field, getattr(value, "value", value))
+        return await self._commit_and_reload(request.id)
 
-        # Apply pagination and ordering
-        query = query.order_by(Request.created_at.desc()).offset(skip).limit(limit)
+    async def cancel(self, user: User, request_id: int) -> Request:
+        request = await self._load_owned(user, request_id)
+        if request.status != RequestStatus.PENDING.value:
+            raise ValidationException("Only pending requests can be cancelled")
+        request.status = RequestStatus.CANCELLED.value
+        return await self._commit_and_reload(request.id)
 
-        result = await self.db.execute(query)
-        requests = list(result.scalars().all())
+    async def feedback(self, user: User, request_id: int, data: RequestFeedback) -> Request:
+        request = await self._load_owned(user, request_id)
+        if request.status != RequestStatus.COMPLETED.value:
+            raise ValidationException("Feedback is only allowed for completed requests")
+        request.rating = data.rating
+        request.feedback = data.feedback
+        return await self._commit_and_reload(request.id)
 
-        return requests, total
-
-    # ========================================================================
-    # Update Request
-    # ========================================================================
-
-    async def update_request(
-        self,
-        request_id: int,
-        user: User,
-        request_data: RequestUpdate,
+    async def update_status(
+        self, staff: User, request_id: int, data: RequestUpdateStatus
     ) -> Request:
-        """
-        อัปเดตข้อมูล Request (โดยเจ้าของ Request)
-        
-        Args:
-            request_id: ID ของ Request
-            user: User ที่แก้ไข
-            request_data: ข้อมูลที่ต้องการอัปเดต
-        
-        Returns:
-            Request object ที่อัปเดตแล้ว
-        """
-        request = await self._get_request_by_id(request_id)
-
-        # ตรวจสอบสิทธิ์
-        if not self._can_user_modify_request(request, user):
-            raise ForbiddenException(
-                "You cannot modify this request or request status does not allow modification"
+        request = await self._load(request_id, for_update=True)
+        new_status = data.status.value
+        allowed = REQUEST_STATUS_TRANSITIONS.get(request.status, set())
+        if new_status not in allowed:
+            raise ValidationException(
+                f"Cannot change status from {request.status} to {new_status}",
+                details={"allowed": sorted(allowed)},
             )
-
-        # อัปเดตข้อมูล
-        update_data = request_data.model_dump(exclude_unset=True)
-        for key, value in update_data.items():
-            if hasattr(request, key):
-                # Convert enum to value
-                if isinstance(value, (RequestType, RequestPriority)):
-                    value = value.value
-                setattr(request, key, value)
-
-        await self.db.commit()
-        await self.db.refresh(request)
-
-        return request
-
-    # ========================================================================
-    # Update Status (Staff/Admin)
-    # ========================================================================
-
-    async def update_request_status(
-        self,
-        request_id: int,
-        user: User,
-        status_data: RequestUpdateStatus,
-    ) -> Request:
-        """
-        อัปเดตสถานะ Request (โดย Staff/Admin)
-        
-        Args:
-            request_id: ID ของ Request
-            user: Staff/Admin ที่อัปเดต
-            status_data: ข้อมูลสถานะใหม่
-        
-        Returns:
-            Request object ที่อัปเดตแล้ว
-        """
-        request = await self._get_request_by_id(request_id)
-
-        # อัปเดตสถานะ
-        old_status = request.status
-        request.status = status_data.status.value
-        request.status_notes = status_data.status_notes
-
-        # อัปเดต timestamps ตามสถานะ
-        now = datetime.utcnow()
-
-        if status_data.status == RequestStatus.IN_PROGRESS and old_status == RequestStatus.PENDING.value:
+        now = datetime.now(UTC)
+        request.status = new_status
+        if data.status_notes is not None:
+            request.status_notes = data.status_notes
+        if new_status == RequestStatus.IN_PROGRESS.value:
             request.started_at = now
-
-        elif status_data.status == RequestStatus.COMPLETED:
+            if request.assigned_staff_id is None:
+                request.assigned_staff_id = staff.id
+                request.assigned_at = now
+        elif new_status == RequestStatus.COMPLETED.value:
             request.completed_at = now
             request.resolved_at = now
-            request.resolution = status_data.resolution
+            request.resolution = data.resolution
+        elif new_status == RequestStatus.REJECTED.value:
+            request.rejection_reason = data.rejection_reason
+        notify_request_status(self.db, request)
+        return await self._commit_and_reload(request.id)
 
-        elif status_data.status == RequestStatus.REJECTED:
-            request.rejection_reason = status_data.rejection_reason
-
-        await self.db.commit()
-        await self.db.refresh(request)
-
-        # TODO: สร้าง Notification สำหรับเจ้าของ Request
-
-        return request
-
-    # ========================================================================
-    # Assign Request (Staff/Admin)
-    # ========================================================================
-
-    async def assign_request(
-        self,
-        request_id: int,
-        assigned_staff_id: int,
-        user: User,
-    ) -> Request:
-        """
-        มอบหมายงานให้กับ Staff
-        
-        Args:
-            request_id: ID ของ Request
-            assigned_staff_id: ID ของ Staff ที่จะรับผิดชอบ
-            user: Admin/Staff ที่มอบหมาย
-        
-        Returns:
-            Request object ที่อัปเดตแล้ว
-        """
-        request = await self._get_request_by_id(request_id)
-
-        # ตรวจสอบว่า assigned_staff เป็น Staff หรือ Admin จริง
-        staff_query = select(User).where(User.id == assigned_staff_id)
-        staff_result = await self.db.execute(staff_query)
-        staff = staff_result.scalar_one_or_none()
-
-        if not staff:
-            raise NotFoundException(f"User with ID {assigned_staff_id} not found")
-
-        if staff.role not in [UserRole.STAFF.value, UserRole.ADMIN.value]:
-            raise ValidationException("Can only assign to staff or admin users")
-
-        # มอบหมายงาน
-        request.assigned_staff_id = assigned_staff_id
-
-        if not request.assigned_at:
-            request.assigned_at = datetime.utcnow()
-
-        # ถ้ายังเป็น PENDING ให้เปลี่ยนเป็น IN_PROGRESS
-        if request.status == RequestStatus.PENDING.value:
-            request.status = RequestStatus.IN_PROGRESS.value
-            request.started_at = datetime.utcnow()
-
-        await self.db.commit()
-        await self.db.refresh(request)
-
-        # TODO: สร้าง Notification สำหรับ Staff ที่ถูกมอบหมาย
-
-        return request
-
-    # ========================================================================
-    # Cancel Request (User)
-    # ========================================================================
-
-    async def cancel_request(self, request_id: int, user: User) -> Request:
-        """
-        ยกเลิก Request (โดยเจ้าของ Request)
-        
-        Args:
-            request_id: ID ของ Request
-            user: User ที่ยกเลิก
-        
-        Returns:
-            Request object ที่อัปเดตแล้ว
-        """
-        request = await self._get_request_by_id(request_id)
-
-        # ตรวจสอบสิทธิ์
-        if request.user_id != user.id:
-            raise ForbiddenException("You can only cancel your own requests")
-
-        # ตรวจสอบสถานะ
-        if request.status in [
-            RequestStatus.COMPLETED.value,
-            RequestStatus.CANCELLED.value,
-        ]:
-            raise ValidationException(
-                f"Cannot cancel request with status {request.status}"
-            )
-
-        request.status = RequestStatus.CANCELLED.value
-
-        await self.db.commit()
-        await self.db.refresh(request)
-
-        return request
+    async def assign(self, staff: User, request_id: int, data: RequestAssign) -> Request:
+        request = await self._load(request_id, for_update=True)
+        if request.status not in REQUEST_STATUS_TRANSITIONS:
+            raise ValidationException("Cannot assign a closed request")
+        assignee = await self.db.get(User, data.assigned_staff_id)
+        if assignee is None or not assignee.is_active or not _is_staff(assignee):
+            raise ValidationException("Assignee must be an active staff or admin user")
+        request.assigned_staff_id = assignee.id
+        request.assigned_at = datetime.now(UTC)
+        notify_request_assigned(self.db, request, assignee.id)
+        return await self._commit_and_reload(request.id)
