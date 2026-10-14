@@ -7,7 +7,7 @@ python-multipart==0.0.20
 
 # Validation & settings
 pydantic==2.10.4
-pydantic-settings==2.7.1
+pydantic-settings==2.15.0
 email-validator==2.2.0
 
 # Database (async PostgreSQL)
