@@ -58,6 +58,10 @@ export PROJECT_ID=smart-campus-prod          # REGION ค่าเริ่ม�
 
 ค่าเหล่านี้ `setup.sh` พิมพ์ออกมาให้ตอนจบแต่ละขั้น
 
+สุดท้ายเปิดการ deploy: **Settings › Secrets and variables › Actions › Variables** (ระดับ repository)
+เพิ่ม `DEPLOY_ENABLED` = `true` — ถ้ายังไม่ตั้ง `backend-cd` จะถูกข้าม (skipped) ทุกครั้ง
+ทำให้ทำงานบน local และ merge PR ได้ก่อนที่ cloud จะพร้อม
+
 **Branch protection**: `main` ห้าม push ตรง, merge ผ่าน PR จาก `dev`, ต้องผ่าน `backend-ci` + review 1 คน;
 `dev` merge ผ่าน PR และต้องผ่าน `backend-ci`
 

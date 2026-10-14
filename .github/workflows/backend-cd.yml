@@ -23,8 +23,9 @@ concurrency:
 
 jobs:
   deploy:
-    # workflow_dispatch จาก branch อื่นต้องไม่ถูก deploy ไป dev
-    if: github.ref_name == 'main' || github.ref_name == 'dev'
+    # ปิดไว้จนกว่าจะตั้งค่า GCP เสร็จ: ตั้ง repository variable DEPLOY_ENABLED=true เพื่อเปิด
+    # และ workflow_dispatch จาก branch อื่นต้องไม่ถูก deploy ไป dev
+    if: vars.DEPLOY_ENABLED == 'true' && (github.ref_name == 'main' || github.ref_name == 'dev')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
