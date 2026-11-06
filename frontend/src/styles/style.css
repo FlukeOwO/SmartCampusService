@@ -17,7 +17,7 @@
     --primary-border: #FDBA74;
     
     --gradient-primary: linear-gradient(135deg, #C44E10 0%, #E9631A 100%);
-    --gradient-nav: linear-gradient(135deg, #7c2d12 0%, #9a3603 50%, #e35205 100%);
+    --gradient-nav: #E9631A;
     --gradient-card-top: linear-gradient(90deg, #e35205 0%, #f97316 100%);
     
     /* Vibrant Accents */
@@ -117,7 +117,7 @@ a:hover {
 
 /* Top Sticky Navigation Bar */
 .navbar {
-    background: var(--gradient-nav);
+    background: #E9631A;
     color: #ffffff;
     padding: 0.75rem 2rem;
     display: flex;
@@ -169,7 +169,7 @@ a:hover {
 }
 
 .nav-links a {
-    color: rgba(255, 255, 255, 0.85);
+    color: #ffffff;
     padding: 0.45rem 0.85rem;
     border-radius: var(--radius-sm);
     font-size: 0.88rem;
