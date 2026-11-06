@@ -1,78 +1,133 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
-import { defaultSlot, formatShort, localInputToIso, toLocalInput } from '../lib/format'
+import { localInputToIso } from '../lib/format'
 import { useFlash } from './Flash'
 import { Modal } from './ui'
 
+/** ชั่วโมงเปิด-ปิดเริ่มต้น (ห้อง) — ภายหลังควรมาจากข้อมูลห้อง */
+const OPEN_HOUR = 8
+const CLOSE_HOUR = 20
+
+function todayStr() {
+  const d = new Date()
+  return d.toISOString().slice(0, 10)
+}
+
+function pad(n) {
+  return String(n).padStart(2, '0')
+}
+
+function localDateTime(dateStr, hour) {
+  return `${dateStr}T${pad(hour)}:00`
+}
+
+function overlaps(busy, start, end) {
+  const s = new Date(start).getTime()
+  const e = new Date(end).getTime()
+  return busy.some((b) => {
+    const bs = new Date(b.start_time).getTime()
+    const be = new Date(b.end_time).getTime()
+    return s < be && e > bs
+  })
+}
+
 /**
- * Modal จองห้อง/อุปกรณ์ ใช้ร่วมกันสองแบบเหมือนของเดิม
- * ตรวจช่วงเวลาว่างกับ API ทุกครั้งที่เปลี่ยนเวลา และแปลงเวลาท้องถิ่นเป็น ISO มี timezone ก่อนส่ง
+ * Modal จองห้อง/อุปกรณ์
+ * - เลือกวันที่ แล้วคลิกกล่องชั่วโมง (เทา = มีคนจองแล้ว)
+ * - คลิกครั้งแรก = เริ่ม, คลิกครั้งที่สอง = สิ้นสุด (ช่วงต่อเนื่อง)
  */
 export default function BookingModal({ target, onClose }) {
   const flash = useFlash()
   const navigate = useNavigate()
-  const slot = defaultSlot()
-  // เวลาเริ่มต้นที่เลือกได้ (ตอนเปิด modal): จองย้อนหลังไม่ได้
-  const [minStart] = useState(() => toLocalInput(new Date()))
-  const [form, setForm] = useState({
-    title: target.kind === 'room' ? 'Room reservation' : 'Equipment checkout',
-    start: slot.start,
-    end: slot.end,
-    attendees_count: '',
-    purpose: '',
-  })
-  const [availability, setAvailability] = useState(null)
+  const path = target.kind === 'room' ? 'rooms' : 'equipments'
+
+  const [date, setDate] = useState(todayStr)
+  const [selected, setSelected] = useState([])
+  const [title, setTitle] = useState(target.kind === 'room' ? 'จองห้อง' : 'ยืมอุปกรณ์')
+  const [attendees, setAttendees] = useState('')
+  const [busySlots, setBusySlots] = useState([])
+  const [loadingSlots, setLoadingSlots] = useState(false)
   const [error, setError] = useState(null)
   const [submitting, setSubmitting] = useState(false)
 
-  const path = target.kind === 'room' ? 'rooms' : 'equipments'
-
-  const inPast = Boolean(form.start && form.start < minStart)
-  const validRange = Boolean(form.start && form.end && new Date(form.end) > new Date(form.start)) && !inPast
+  const hours = useMemo(() => {
+    const list = []
+    for (let h = OPEN_HOUR; h < CLOSE_HOUR; h++) list.push(h)
+    return list
+  }, [])
 
   useEffect(() => {
-    if (!validRange) return undefined
     let cancelled = false
-    const timer = setTimeout(() => {
-      api(`/bookings/${path}/${target.id}/availability`, {
-        params: { start_time: localInputToIso(form.start), end_time: localInputToIso(form.end) },
-      })
-        .then((result) => !cancelled && setAvailability(result))
-        .catch(() => !cancelled && setAvailability(null))
-    }, 300)
+    setLoadingSlots(true)
+    const start = localDateTime(date, OPEN_HOUR)
+    const end = localDateTime(date, CLOSE_HOUR)
+    api(`/bookings/${path}/${target.id}/availability`, {
+      params: { start_time: localInputToIso(start), end_time: localInputToIso(end) },
+    })
+      .then((res) => !cancelled && setBusySlots(res.busy_slots || []))
+      .catch(() => !cancelled && setBusySlots([]))
+      .finally(() => !cancelled && setLoadingSlots(false))
     return () => {
       cancelled = true
-      clearTimeout(timer)
     }
-  }, [validRange, form.start, form.end, path, target.id])
+  }, [date, path, target.id])
 
-  const set = (field) => (e) => setForm({ ...form, [field]: e.target.value })
+  const isBusy = (hour) => {
+    const start = localDateTime(date, hour)
+    const end = localDateTime(date, hour + 1)
+    return overlaps(busySlots, start, end)
+  }
+
+  const isPast = (hour) => {
+    const now = new Date()
+    const slotStart = new Date(localDateTime(date, hour))
+    return slotStart <= now
+  }
+
+  const toggleHour = (hour) => {
+    if (isBusy(hour) || isPast(hour)) return
+    setSelected((prev) => {
+      if (prev.length === 0) return [hour]
+      if (prev.includes(hour)) return prev.filter((h) => h !== hour)
+      const min = Math.min(...prev, hour)
+      const max = Math.max(...prev, hour)
+      const range = []
+      for (let h = min; h <= max; h++) {
+        if (isBusy(h) || isPast(h)) continue
+        range.push(h)
+      }
+      return range
+    })
+    setError(null)
+  }
+
+  const sorted = [...selected].sort((a, b) => a - b)
+  const startHour = sorted[0]
+  const endHour = sorted.length ? sorted[sorted.length - 1] + 1 : null
 
   const onSubmit = async (e) => {
     e.preventDefault()
-    if (new Date(form.end) <= new Date(form.start)) {
-      setError('End time must be after start time')
+    if (!startHour || !endHour) {
+      setError('กรุณาเลือกช่วงเวลา')
       return
     }
     setSubmitting(true)
     setError(null)
     const payload = {
-      title: form.title,
-      purpose: form.purpose || null,
-      start_time: localInputToIso(form.start),
-      end_time: localInputToIso(form.end),
+      title,
+      start_time: localInputToIso(localDateTime(date, startHour)),
+      end_time: localInputToIso(localDateTime(date, endHour)),
       ...(target.kind === 'room'
-        ? { room_id: target.id, attendees_count: form.attendees_count ? Number(form.attendees_count) : null }
+        ? { room_id: target.id, attendees_count: attendees ? Number(attendees) : null }
         : { equipment_id: target.id }),
     }
     try {
       await api(`/bookings/${path}`, { method: 'POST', json: payload })
-      flash('Booking reservation submitted! Waiting for staff approval.', 'success')
+      flash('ส่งคำขอจองแล้ว รอเจ้าหน้าที่อนุมัติ', 'success')
       onClose()
       navigate('/student/bookings')
     } catch (err) {
-      // 409 = ถูกจองช่วงนี้แล้ว, 400 = กฎการจองไม่ผ่าน (ย้อนหลัง, สั้น/ยาวเกิน, เกินความจุ)
       setError(err.message)
     } finally {
       setSubmitting(false)
@@ -80,17 +135,12 @@ export default function BookingModal({ target, onClose }) {
   }
 
   return (
-    <Modal title="Make Reservation" icon="fa-calendar-plus" onClose={onClose}>
-      <div
-        style={{
-          background: '#f8fafc',
-          padding: '0.85rem',
-          borderRadius: 'var(--radius-sm)',
-          border: '1px solid var(--border-card)',
-          marginBottom: '1.25rem',
-        }}
-      >
-        <div style={{ fontWeight: 700, fontSize: '1.05rem', color: 'var(--text-heading)' }}>{target.label}</div>
+    <Modal title="จองห้อง / อุปกรณ์" icon="fa-calendar-plus" onClose={onClose}>
+      <div className="booking-target">
+        <div style={{ fontWeight: 700, fontSize: '1.05rem' }}>{target.label}</div>
+        <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginTop: 4 }}>
+          เปิด {pad(OPEN_HOUR)}:00 – {pad(CLOSE_HOUR)}:00 · กล่องเทา = มีคนจองแล้ว
+        </div>
       </div>
 
       {error && (
@@ -102,65 +152,85 @@ export default function BookingModal({ target, onClose }) {
 
       <form onSubmit={onSubmit}>
         <div className="form-group">
-          <label htmlFor="booking-title">Title</label>
-          <input id="booking-title" type="text" required maxLength={255} value={form.title} onChange={set('title')} />
+          <label htmlFor="booking-date">วันที่</label>
+          <input
+            id="booking-date"
+            type="date"
+            required
+            min={todayStr()}
+            value={date}
+            onChange={(e) => {
+              setDate(e.target.value)
+              setSelected([])
+            }}
+          />
         </div>
+
         <div className="form-group">
-          <label htmlFor="booking-start">
-            <i className="fa-regular fa-clock" /> Start Date &amp; Time
-          </label>
-          <input id="booking-start" type="datetime-local" required min={minStart} value={form.start} onChange={set('start')} />
+          <label>เลือกช่วงเวลา (คลิกกล่องชั่วโมง)</label>
+          {loadingSlots ? (
+            <div className="muted" style={{ fontSize: '0.85rem' }}>กำลังโหลดตารางว่าง...</div>
+          ) : (
+            <div className="hour-grid">
+              {hours.map((h) => {
+                const busy = isBusy(h)
+                const past = isPast(h)
+                const active = selected.includes(h)
+                const cls = [
+                  'hour-slot',
+                  busy ? 'busy' : '',
+                  past && !busy ? 'past' : '',
+                  active ? 'selected' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ')
+                return (
+                  <button
+                    key={h}
+                    type="button"
+                    className={cls}
+                    disabled={busy || past}
+                    onClick={() => toggleHour(h)}
+                    title={busy ? 'มีคนจองแล้ว' : past ? 'ผ่านมาแล้ว' : `${pad(h)}:00–${pad(h + 1)}:00`}
+                  >
+                    {pad(h)}:00
+                  </button>
+                )
+              })}
+            </div>
+          )}
+          {startHour != null && endHour != null && (
+            <div className="free-slot" style={{ marginTop: 8 }}>
+              <i className="fa-solid fa-circle-check" /> เลือกแล้ว {pad(startHour)}:00 – {pad(endHour)}:00
+            </div>
+          )}
         </div>
+
         <div className="form-group">
-          <label htmlFor="booking-end">
-            <i className="fa-regular fa-clock" /> End Date &amp; Time
-          </label>
-          <input id="booking-end" type="datetime-local" required min={form.start || minStart} value={form.end} onChange={set('end')} />
+          <label htmlFor="booking-title">หัวข้อ</label>
+          <input id="booking-title" type="text" required maxLength={255} value={title} onChange={(e) => setTitle(e.target.value)} />
         </div>
+
         {target.kind === 'room' && (
           <div className="form-group">
-            <label htmlFor="booking-attendees">Attendees (optional, max {target.capacity})</label>
+            <label htmlFor="booking-attendees">จำนวนผู้ใช้ (ไม่บังคับ, สูงสุด {target.capacity})</label>
             <input
               id="booking-attendees"
               type="number"
               min={1}
               max={target.capacity}
-              value={form.attendees_count}
-              onChange={set('attendees_count')}
+              value={attendees}
+              onChange={(e) => setAttendees(e.target.value)}
             />
           </div>
         )}
 
-        {inPast && (
-          <div className="busy-slot">
-            <i className="fa-solid fa-circle-xmark" /> Start time is in the past. Pick a time from now on.
-          </div>
-        )}
-        {form.start && form.end && !inPast && new Date(form.end) <= new Date(form.start) && (
-          <div className="busy-slot">
-            <i className="fa-solid fa-circle-xmark" /> End time must be after the start time.
-          </div>
-        )}
-        {validRange && availability &&
-          (availability.available ? (
-            <div className="free-slot">
-              <i className="fa-solid fa-circle-check" /> Available for this time slot
-            </div>
-          ) : (
-            <div className="busy-slot">
-              <i className="fa-solid fa-circle-xmark" /> Not available:{' '}
-              {availability.busy_slots.length
-                ? availability.busy_slots.map((s) => `${formatShort(s.start_time)}–${formatShort(s.end_time)}`).join(', ')
-                : 'resource is not bookable'}
-            </div>
-          ))}
-
         <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1.5rem' }}>
-          <button type="submit" className="button" style={{ flex: 1 }} disabled={submitting}>
-            <i className="fa-solid fa-check" /> {submitting ? 'Submitting...' : 'Confirm Reservation'}
+          <button type="submit" className="button" style={{ flex: 1 }} disabled={submitting || !startHour}>
+            <i className="fa-solid fa-check" /> {submitting ? 'กำลังส่ง...' : 'ยืนยันการจอง'}
           </button>
           <button type="button" className="button secondary-button" onClick={onClose}>
-            Cancel
+            ยกเลิก
           </button>
         </div>
       </form>
