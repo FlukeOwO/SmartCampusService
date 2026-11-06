@@ -54,8 +54,17 @@ export default function StudentDashboard() {
         <StatCard
           title="คำร้องของฉัน"
           value={data?.requests.total}
+          note={
+            data && (
+              <div style={{ fontSize: '0.78rem', marginTop: 4 }}>
+                <span style={{ color: '#b45309' }}>{data.requests.items.filter(r => r.status === 'pending').length} รอ</span>
+                {' · '}
+                <span style={{ color: '#0369a1' }}>{data.requests.items.filter(r => r.status === 'in_progress').length} กำลังทำ</span>
+              </div>
+            )
+          }
           icon="fa-bullhorn"
-          colors={{ background: '#eff6ff', color: '#2563eb', borderColor: '#bfdbfe' }}
+          colors={{ background: 'var(--primary-light)', color: 'var(--primary)', borderColor: 'var(--primary-border)' }}
         >
           <Link to="/student/requests" className="button button-sm secondary-button" style={{ width: '100%' }}>
             ดูทั้งหมด <i className="fa-solid fa-arrow-right" style={{ fontSize: '0.75rem' }} />
@@ -65,8 +74,17 @@ export default function StudentDashboard() {
         <StatCard
           title="การจองของฉัน"
           value={data?.bookings.total}
+          note={
+            data && (
+              <div style={{ fontSize: '0.78rem', marginTop: 4 }}>
+                <span style={{ color: '#b45309' }}>{data.bookings.items.filter(b => b.status === 'pending').length} รอ</span>
+                {' · '}
+                <span style={{ color: '#15803d' }}>{data.bookings.items.filter(b => b.status === 'confirmed').length} ยืนยัน</span>
+              </div>
+            )
+          }
           icon="fa-calendar-check"
-          colors={{ background: '#ecfeff', color: '#0891b2', borderColor: '#a5f3fc' }}
+          colors={{ background: 'var(--primary-light)', color: 'var(--primary)', borderColor: 'var(--primary-border)' }}
         >
           <Link to="/student/bookings" className="button button-sm secondary-button" style={{ width: '100%' }}>
             ประวัติการจอง <i className="fa-solid fa-arrow-right" style={{ fontSize: '0.75rem' }} />
@@ -101,7 +119,7 @@ export default function StudentDashboard() {
           </div>
           {loading && <Loading />}
           {data && data.requests.items.length + data.bookings.items.length === 0 && (
-            <EmptyState compact text="ยังไม่มีคำร้องหรือการจอง" />
+            <EmptyState compact icon="fa-solid fa-inbox" title="ยังไม่มีกิจกรรม" text="ส่งคำร้องหรือจองห้องเพื่อเริ่มต้น" />
           )}
           {data && (
             <div className="stack">
@@ -147,7 +165,9 @@ export default function StudentDashboard() {
               </button>
             )}
           </div>
-          {data && data.notifications.items.length === 0 && <EmptyState compact text="ไม่มีแจ้งเตือนใหม่" />}
+          {data && data.notifications.items.length === 0 && (
+            <EmptyState compact icon="fa-solid fa-bell" title="ไม่มีแจ้งเตือนใหม่" text="เราจะแจ้งให้คุณทราบเมื่อมีการเปลี่ยนแปลงสถานะคำร้องหรือการจอง" />
+          )}
           {data && data.notifications.items.length > 0 && (
             <ul className="notification-list">
               {data.notifications.items.map((n) => (
