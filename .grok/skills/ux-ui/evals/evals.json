@@ -1,0 +1,8 @@
+{
+  "skill": "ux-ui",
+  "test_cases": [
+    {"name": "design_dashboard", "input": "Make the staff dashboard look cohesive", "assertions": ["Uses warm cream background", "Orange is accent only", "Cards have consistent style"]},
+    {"name": "design_booking", "input": "Improve the booking modal UI", "assertions": ["Clear hierarchy", "Primary action is obvious", "Status feedback is visible"]},
+    {"name": "apply_theme", "input": "Apply the education theme to the frontend", "assertions": ["Color tokens match skill", "Spacing is consistent", "No pure white page background"]}
+  ]
+}
