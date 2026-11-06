@@ -9,7 +9,6 @@ import { useAction } from '../../lib/useAction'
 import { matches } from '../../lib/search'
 import { useApi } from '../../lib/useApi'
 import { describeBooking, useResources } from '../../lib/useResources'
-import { useUserNames } from '../../lib/useUserNames'
 
 const TABS = [
   { value: 'all', label: 'All' },
@@ -21,7 +20,6 @@ const TABS = [
 
 export default function StaffBookings() {
   const ask = useDialog()
-  const userName = useUserNames()
   const { lookup } = useResources()
   const [params, setParams] = useSearchParams()
   const status = params.get('status') || 'all'
@@ -35,7 +33,7 @@ export default function StaffBookings() {
 
   const rows = (data || [])
     .map((b) => ({ ...b, item: describeBooking(b, lookup) }))
-    .filter((b) => matches(query, b.title, b.item.name, b.item.meta, userName(b.user_id)))
+    .filter((b) => matches(query, b.title, b.item.name, b.item.meta, b.user_name))
 
   return (
     <>
@@ -69,7 +67,7 @@ export default function StaffBookings() {
                   <td>
                     <strong>#{booking.id}</strong>
                   </td>
-                  <td style={{ fontWeight: 600 }}>{userName(booking.user_id)}</td>
+                  <td style={{ fontWeight: 600 }}>{booking.user_name || `User #${booking.user_id}`}</td>
                   <td>
                     <div>
                       <span className="status-badge status-in_progress" style={{ fontSize: '0.72rem' }}>

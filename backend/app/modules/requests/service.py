@@ -30,6 +30,7 @@ from app.common.exceptions import (
     ValidationException,
 )
 from app.common.storage import get_storage, read_validated_upload
+from app.common.user_names import attach_user_names
 from app.core.config import settings
 from app.models import Request, RequestAttachment, User
 from app.modules.notifications.service import (
@@ -73,7 +74,13 @@ class RequestService:
         request = await self.db.scalar(query)
         if request is None:
             raise NotFoundException("Request not found")
+        await self._attach_names([request])
         return request
+
+    async def _attach_names(self, requests: list[Request]) -> None:
+        await attach_user_names(
+            self.db, requests, requester_name="user_id", assigned_staff_name="assigned_staff_id"
+        )
 
     async def _load_accessible(self, user: User, request_id: int, for_update: bool = False):
         request = await self._load(request_id, for_update)
@@ -211,7 +218,9 @@ class RequestService:
             .offset(params.offset)
             .limit(params.page_size)
         )
-        return list(rows), total or 0
+        requests = list(rows)
+        await self._attach_names(requests)
+        return requests, total or 0
 
     # --------------------------------------------------------------- update
     async def update(self, user: User, request_id: int, data: RequestUpdate) -> Request:

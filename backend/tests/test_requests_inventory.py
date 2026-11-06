@@ -162,3 +162,28 @@ async def test_notifications_are_private(client, student, student2, room):
 async def test_health(client):
     assert (await client.get("/healthz")).json()["status"] == "ok"
     assert (await client.get("/readyz")).status_code == 200
+
+
+async def test_responses_include_people_names(client, student, staff):
+    request_id = (await create_request(client, student)).json()["id"]
+    await client.patch(
+        f"{API}/requests/{request_id}/assign",
+        headers=auth(staff),
+        json={"assigned_staff_id": staff.id},
+    )
+    listed = (await client.get(f"{API}/requests", headers=auth(staff))).json()["items"][0]
+    assert listed["requester_name"] == student.full_name
+    assert listed["assigned_staff_name"] == staff.full_name
+
+    detail = (await client.get(f"{API}/requests/{request_id}", headers=auth(student))).json()
+    assert detail["assigned_staff_name"] == staff.full_name
+
+    await client.patch(
+        f"{API}/requests/{request_id}/status",
+        headers=auth(staff),
+        json={"status": "in_progress"},
+    )
+    notes = (await client.get(f"{API}/notifications", headers=auth(student))).json()["items"]
+    status_note = next(n for n in notes if n["notification_type"] == "request_update")
+    assert "กำลังดำเนินการ" in status_note["message"]
+    assert "in_progress" not in status_note["message"]

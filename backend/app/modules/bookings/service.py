@@ -34,6 +34,7 @@ from app.common.exceptions import (
     NotFoundException,
     ValidationException,
 )
+from app.common.user_names import attach_user_names
 from app.models import Booking, Equipment, Room, User
 from app.modules.notifications.service import notify_booking
 from app.schemas.booking import BookingCreateEquipment, BookingCreateRoom
@@ -205,6 +206,7 @@ class BookingService:
             raise NotFoundException("Booking not found")
         if booking.user_id != user.id and user.role not in STAFF_ROLES:
             raise ForbiddenException("You can only view your own bookings")
+        await attach_user_names(self.db, [booking], user_name="user_id")
         return booking
 
     async def list_bookings(
@@ -236,7 +238,9 @@ class BookingService:
             .offset(params.offset)
             .limit(params.page_size)
         )
-        return list(rows), total or 0
+        bookings = list(rows)
+        await attach_user_names(self.db, bookings, user_name="user_id")
+        return bookings, total or 0
 
     async def availability(
         self, target_name: str, resource_id: int, start: datetime, end: datetime

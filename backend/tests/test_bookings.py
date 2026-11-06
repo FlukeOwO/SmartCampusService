@@ -33,6 +33,9 @@ async def test_book_room_success_and_notification(client, student, room):
     stats = await client.get(f"{API}/notifications/stats/summary", headers=auth(student))
     assert stats.json() == {"total": 1, "unread": 1, "read": 0}
 
+    mine = (await client.get(f"{API}/bookings/me", headers=auth(student))).json()["items"]
+    assert mine[0]["user_name"] == student.full_name
+
 
 async def test_overlapping_booking_conflict(client, student, student2, room):
     start, end = slot()
