@@ -10,7 +10,7 @@ import { useApi } from '../../lib/useApi'
 const TABS = [
   { value: 'all', label: 'All' },
   { value: 'pending', label: 'Pending', icon: 'fa-clock', color: '#fbbf24' },
-  { value: 'in_progress', label: 'In Progress', icon: 'fa-spinner', color: '#38bdf8' },
+  { value: 'in_progress', label: 'In Progress', icon: 'fa-play', color: '#0284c7' },
   { value: 'completed', label: 'Completed', icon: 'fa-check', color: '#34d399' },
   { value: 'rejected', label: 'Rejected', icon: 'fa-xmark', color: '#f87171' },
 ]
@@ -61,10 +61,17 @@ export default function MyRequests() {
                       <strong>{item.request_number}</strong>
                     </td>
                     <td>
-                      <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{item.title}</div>
-                      <small className="muted">
-                        <i className={`fa-solid fa-chevron-${openId === item.id ? 'up' : 'down'}`} /> details
-                      </small>
+                      <button
+                        type="button"
+                        className="row-toggle"
+                        aria-expanded={openId === item.id}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setOpenId(openId === item.id ? null : item.id)
+                        }}
+                      >
+                        <i className={`fa-solid fa-chevron-${openId === item.id ? 'up' : 'down'}`} /> {item.title}
+                      </button>
                     </td>
                     <td>{statusLabel(item.request_type)}</td>
                     <td>

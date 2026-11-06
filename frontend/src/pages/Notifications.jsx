@@ -1,5 +1,7 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { api } from '../api/client'
+import { useAuth } from '../auth/AuthContext'
 import { useFlash } from '../components/Flash'
 import { EmptyState, ErrorState, Loading, PageHeader, TabPills } from '../components/ui'
 import { formatDateTime } from '../lib/format'
@@ -7,8 +9,16 @@ import { useApi } from '../lib/useApi'
 
 const notifyChanged = () => window.dispatchEvent(new Event('notifications:changed'))
 
+/** หน้าที่เกี่ยวข้องกับแจ้งเตือน (related_resource_type จาก backend: request / booking) */
+function relatedPath(n, isStaff) {
+  if (n.related_resource_type === 'request') return isStaff ? '/staff/requests' : '/student/requests'
+  if (n.related_resource_type === 'booking') return isStaff ? '/staff/bookings' : '/student/bookings'
+  return null
+}
+
 export default function Notifications() {
   const flash = useFlash()
+  const { isStaff } = useAuth()
   const [tab, setTab] = useState('unread')
   const { data, error, loading, reload } = useApi(
     () => api('/notifications', { params: { page_size: 100, unread_only: tab === 'unread' } }),
@@ -58,7 +68,7 @@ export default function Notifications() {
         {data && data.items.length > 0 && (
           <ul className="notification-list">
             {data.items.map((n) => (
-              <li key={n.id} className="notification-item" style={n.is_read ? { opacity: 0.6 } : undefined}>
+              <li key={n.id} className={`notification-item ${n.is_read ? 'is-read' : ''}`}>
                 <div className="notification-msg">
                   <span>
                     <strong>{n.title}</strong> — {n.message}
@@ -66,6 +76,11 @@ export default function Notifications() {
                 </div>
                 <div className="notification-actions">
                   <span className="notification-time">{formatDateTime(n.created_at)}</span>
+                  {relatedPath(n, isStaff) && (
+                    <Link to={relatedPath(n, isStaff)} className="button button-sm secondary-button">
+                      View
+                    </Link>
+                  )}
                   {!n.is_read && (
                     <button
                       type="button"
@@ -84,7 +99,7 @@ export default function Notifications() {
                     aria-label="Delete notification"
                     onClick={() => act(() => api(`/notifications/${n.id}`, { method: 'DELETE' }))}
                   >
-                    <i className="fa-solid fa-xmark" />
+                    <i className="fa-solid fa-trash-can" />
                   </button>
                 </div>
               </li>

@@ -1,10 +1,12 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { api, listAll } from '../../api/client'
-import { useFlash } from '../../components/Flash'
+import { listAll } from '../../api/client'
+import { useDialog } from '../../components/Dialog'
 import { EmptyState, ErrorState, Loading, PageHeader, SearchBox, StatusBadge, TabPills } from '../../components/ui'
 import { formatDateTime } from '../../lib/format'
 import { matches } from '../../lib/search'
+import { cancelBooking } from '../../lib/staffActions'
+import { useAction } from '../../lib/useAction'
 import { useApi } from '../../lib/useApi'
 import { describeBooking, useResources } from '../../lib/useResources'
 
@@ -13,27 +15,17 @@ const TABS = [
   { value: 'pending', label: 'Pending', icon: 'fa-clock', color: '#fbbf24' },
   { value: 'confirmed', label: 'Confirmed', icon: 'fa-check', color: '#34d399' },
   { value: 'rejected', label: 'Rejected', icon: 'fa-xmark', color: '#f87171' },
-  { value: 'cancelled', label: 'Cancelled', icon: 'fa-ban', color: '#f87171' },
+  { value: 'cancelled', label: 'Cancelled', icon: 'fa-ban', color: '#94a3b8' },
 ]
 
 export default function BookingHistory() {
-  const flash = useFlash()
+  const ask = useDialog()
   const [tab, setTab] = useState('all')
   const [query, setQuery] = useState('')
   const { lookup } = useResources()
   const { data, error, loading, reload } = useApi(() => listAll('/bookings/me'), [])
+  const { run, busyKey } = useAction(reload)
 
-  const cancel = async (booking) => {
-    const reason = window.prompt('Reason for cancelling this booking?')
-    if (!reason) return
-    try {
-      await api(`/bookings/${booking.id}/cancel`, { method: 'PUT', json: { cancellation_reason: reason } })
-      flash(`Booking #${booking.id} cancelled`, 'success')
-      reload()
-    } catch (err) {
-      flash(err.message, 'danger')
-    }
-  }
 
   const rows = (data || [])
     .map((b) => ({ ...b, item: describeBooking(b, lookup) }))
@@ -99,8 +91,13 @@ export default function BookingHistory() {
                   </td>
                   <td>
                     {['pending', 'confirmed'].includes(booking.status) && new Date(booking.start_time) > new Date() && (
-                      <button type="button" className="button button-sm danger-button" style={{ padding: '0.25rem 0.6rem' }} onClick={() => cancel(booking)}>
-                        Cancel
+                      <button
+                        type="button"
+                        className="button button-sm danger-button"
+                        aria-disabled={busyKey !== null || undefined}
+                        onClick={() => run(booking.id, () => cancelBooking(ask, booking), `Booking #${booking.id} cancelled`)}
+                      >
+                        {busyKey === booking.id ? 'Cancelling...' : 'Cancel'}
                       </button>
                     )}
                   </td>

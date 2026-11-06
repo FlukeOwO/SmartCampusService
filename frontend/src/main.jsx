@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { HashRouter } from 'react-router-dom'
 import App from './App.jsx'
 import { AuthProvider } from './auth/AuthContext.jsx'
+import { DialogProvider } from './components/Dialog.jsx'
 import { FlashProvider } from './components/Flash.jsx'
 import './styles/style.css'
 import './styles/app.css'
@@ -13,7 +14,9 @@ createRoot(document.getElementById('root')).render(
     <HashRouter>
       <AuthProvider>
         <FlashProvider>
-          <App />
+          <DialogProvider>
+            <App />
+          </DialogProvider>
         </FlashProvider>
       </AuthProvider>
     </HashRouter>

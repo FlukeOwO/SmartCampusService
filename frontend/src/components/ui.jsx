@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { statusLabel } from '../lib/format'
 
 export function StatusBadge({ status }) {
@@ -21,7 +21,7 @@ export function EmptyState({ icon = 'fa-regular fa-clipboard', title, text, comp
           <i className={icon} />
         </div>
       )}
-      {title && <h3>{title}</h3>}
+      {title && <h2>{title}</h2>}
       {text && <p style={compact ? { fontSize: '0.85rem' } : undefined}>{text}</p>}
     </div>
   )
@@ -95,7 +95,7 @@ export function StatCard({ title, value, note, icon, colors, children }) {
     <div className="card">
       <div className="stat-card">
         <div className="stat-info">
-          <h3>{title}</h3>
+          <h2>{title}</h2>
           {value !== null && <div className="number">{value ?? '–'}</div>}
           {note}
         </div>
@@ -108,26 +108,75 @@ export function StatCard({ title, value, note, icon, colors, children }) {
   )
 }
 
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
 export function Modal({ title, icon, onClose, children }) {
+  const boxRef = useRef(null)
+
+  // ย้ายโฟกัสเข้า dialog ตอนเปิด และคืนโฟกัสให้ปุ่มที่กดเปิดตอนปิด
   useEffect(() => {
-    const onKey = (e) => e.key === 'Escape' && onClose()
+    const previous = document.activeElement
+    const box = boxRef.current
+    const target = box.querySelector('.modal-body input, .modal-body select, .modal-body textarea') || box
+    target.focus()
+    return () => previous?.focus?.()
+  }, [])
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Escape') onClose()
+      if (e.key !== 'Tab') return
+      // วนโฟกัสอยู่ใน dialog ไม่หลุดไปหน้าหลังฉาก
+      const items = [...boxRef.current.querySelectorAll(FOCUSABLE)]
+      if (items.length === 0) return
+      const first = items[0]
+      const last = items[items.length - 1]
+      if (e.shiftKey && (document.activeElement === first || document.activeElement === boxRef.current)) {
+        e.preventDefault()
+        last.focus()
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault()
+        first.focus()
+      }
+    }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
   return (
     <div className="modal-overlay active" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal-container" role="dialog" aria-modal="true" aria-label={title}>
+      <div ref={boxRef} className="modal-container" role="dialog" aria-modal="true" aria-labelledby="modal-title" tabIndex={-1}>
         <div className="modal-header">
-          <h3>
+          <h2 id="modal-title">
             {icon && <i className={`fa-solid ${icon}`} style={{ color: 'var(--primary)' }} />} {title}
-          </h3>
+          </h2>
           <button type="button" className="modal-close" onClick={onClose} aria-label="Close">
-            &times;
+            <i className="fa-solid fa-xmark" />
           </button>
         </div>
         <div className="modal-body">{children}</div>
       </div>
     </div>
+  )
+}
+
+/**
+ * ปุ่มไอคอนสำหรับการกระทำด่วน: แสดง spinner ระหว่างรอ
+ * ใช้ aria-disabled แทน disabled เพื่อให้โฟกัสกลับมาที่ปุ่มได้หลังปิด dialog
+ */
+export function ActionButton({ icon, className, label, busy, disabled, onClick }) {
+  const off = busy || disabled
+  return (
+    <button
+      type="button"
+      className={`btn-icon ${className}`}
+      title={label}
+      aria-label={label}
+      aria-disabled={off || undefined}
+      aria-busy={busy || undefined}
+      onClick={off ? undefined : onClick}
+    >
+      <i className={`fa-solid ${busy ? 'fa-circle-notch fa-spin' : icon}`} />
+    </button>
   )
 }

@@ -105,7 +105,7 @@ export default function Resources() {
                       <i className="fa-solid fa-tags muted" style={{ width: 16 }} /> {item.equipment_type} · {item.equipment_code}
                     </span>
                     <span>
-                      <i className="fa-solid fa-circle-info muted" style={{ width: 16 }} /> {item.description || 'Standard campus gear'}
+                      <i className="fa-solid fa-circle-info muted" style={{ width: 16 }} /> {item.description || 'No description'}
                     </span>
                   </div>
                 </div>

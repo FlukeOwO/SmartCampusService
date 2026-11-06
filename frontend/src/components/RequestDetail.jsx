@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { api } from '../api/client'
 import { formatDateTime, statusLabel } from '../lib/format'
 import { useApi } from '../lib/useApi'
+import { useDialog } from './Dialog'
 import { useFlash } from './Flash'
 import { ErrorState, Loading } from './ui'
 
@@ -12,6 +13,7 @@ function formatSize(bytes) {
 /** รายละเอียดคำร้อง + ไฟล์แนบ (เปิดผ่าน Signed URL) ใช้ทั้งฝั่งนักศึกษาและเจ้าหน้าที่ */
 export default function RequestDetail({ requestId, isOwner, onChanged }) {
   const flash = useFlash()
+  const ask = useDialog()
   const { data: req, error, loading, reload } = useApi(() => api(`/requests/${requestId}`), [requestId])
   const [rating, setRating] = useState(5)
   const [busy, setBusy] = useState(false)
@@ -71,7 +73,7 @@ export default function RequestDetail({ requestId, isOwner, onChanged }) {
         )}
         <div>
           <div className="muted">Assigned staff</div>
-          {req.assigned_staff_id ? `Staff #${req.assigned_staff_id}` : 'Not assigned yet'}
+          {req.assigned_staff_id ? 'Assigned to a staff member' : 'Not assigned yet'}
         </div>
         {req.status_notes && (
           <div>
@@ -100,8 +102,11 @@ export default function RequestDetail({ requestId, isOwner, onChanged }) {
         {req.rating && (
           <div>
             <div className="muted">Rating</div>
-            {'★'.repeat(req.rating)}
-            {'☆'.repeat(5 - req.rating)} {req.feedback}
+            <span aria-label={`${req.rating} out of 5`}>
+              {'★'.repeat(req.rating)}
+              {'☆'.repeat(5 - req.rating)}
+            </span>{' '}
+            {req.feedback}
           </div>
         )}
       </div>
@@ -131,10 +136,15 @@ export default function RequestDetail({ requestId, isOwner, onChanged }) {
             type="button"
             className="button button-sm danger-button"
             disabled={busy}
-            onClick={() =>
-              window.confirm('Cancel this request?') &&
-              run(() => api(`/requests/${req.id}/cancel`, { method: 'POST' }), 'Request cancelled')
-            }
+            onClick={async () => {
+              const ok = await ask({
+                title: `Cancel ${req.request_number}?`,
+                message: 'Staff will stop working on it. You can submit a new request later.',
+                confirmLabel: 'Cancel request',
+                danger: true,
+              })
+              if (ok) run(() => api(`/requests/${req.id}/cancel`, { method: 'POST' }), 'Request cancelled')
+            }}
           >
             <i className="fa-solid fa-ban" /> Cancel Request
           </button>
@@ -149,7 +159,7 @@ export default function RequestDetail({ requestId, isOwner, onChanged }) {
           <select id={`rating-${req.id}`} value={rating} onChange={(e) => setRating(Number(e.target.value))}>
             {[5, 4, 3, 2, 1].map((n) => (
               <option key={n} value={n}>
-                {'★'.repeat(n)}
+                {n} {n === 1 ? 'star' : 'stars'}
               </option>
             ))}
           </select>

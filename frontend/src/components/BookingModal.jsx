@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
-import { defaultSlot, formatShort, localInputToIso } from '../lib/format'
+import { defaultSlot, formatShort, localInputToIso, toLocalInput } from '../lib/format'
 import { useFlash } from './Flash'
 import { Modal } from './ui'
 
@@ -13,6 +13,8 @@ export default function BookingModal({ target, onClose }) {
   const flash = useFlash()
   const navigate = useNavigate()
   const slot = defaultSlot()
+  // เวลาเริ่มต้นที่เลือกได้ (ตอนเปิด modal): จองย้อนหลังไม่ได้
+  const [minStart] = useState(() => toLocalInput(new Date()))
   const [form, setForm] = useState({
     title: target.kind === 'room' ? 'Room reservation' : 'Equipment checkout',
     start: slot.start,
@@ -26,7 +28,8 @@ export default function BookingModal({ target, onClose }) {
 
   const path = target.kind === 'room' ? 'rooms' : 'equipments'
 
-  const validRange = Boolean(form.start && form.end && new Date(form.end) > new Date(form.start))
+  const inPast = Boolean(form.start && form.start < minStart)
+  const validRange = Boolean(form.start && form.end && new Date(form.end) > new Date(form.start)) && !inPast
 
   useEffect(() => {
     if (!validRange) return undefined
@@ -87,10 +90,7 @@ export default function BookingModal({ target, onClose }) {
           marginBottom: '1.25rem',
         }}
       >
-        <small className="muted" style={{ textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.05em', fontSize: '0.72rem' }}>
-          Selected Resource
-        </small>
-        <div style={{ fontWeight: 700, fontSize: '1.05rem', color: 'var(--text-primary)', marginTop: '0.2rem' }}>{target.label}</div>
+        <div style={{ fontWeight: 700, fontSize: '1.05rem', color: 'var(--text-heading)' }}>{target.label}</div>
       </div>
 
       {error && (
@@ -109,13 +109,13 @@ export default function BookingModal({ target, onClose }) {
           <label htmlFor="booking-start">
             <i className="fa-regular fa-clock" /> Start Date &amp; Time
           </label>
-          <input id="booking-start" type="datetime-local" required value={form.start} onChange={set('start')} />
+          <input id="booking-start" type="datetime-local" required min={minStart} value={form.start} onChange={set('start')} />
         </div>
         <div className="form-group">
           <label htmlFor="booking-end">
             <i className="fa-regular fa-clock" /> End Date &amp; Time
           </label>
-          <input id="booking-end" type="datetime-local" required value={form.end} onChange={set('end')} />
+          <input id="booking-end" type="datetime-local" required min={form.start || minStart} value={form.end} onChange={set('end')} />
         </div>
         {target.kind === 'room' && (
           <div className="form-group">
@@ -131,6 +131,16 @@ export default function BookingModal({ target, onClose }) {
           </div>
         )}
 
+        {inPast && (
+          <div className="busy-slot">
+            <i className="fa-solid fa-circle-xmark" /> Start time is in the past. Pick a time from now on.
+          </div>
+        )}
+        {form.start && form.end && !inPast && new Date(form.end) <= new Date(form.start) && (
+          <div className="busy-slot">
+            <i className="fa-solid fa-circle-xmark" /> End time must be after the start time.
+          </div>
+        )}
         {validRange && availability &&
           (availability.available ? (
             <div className="free-slot">

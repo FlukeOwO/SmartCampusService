@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { api, listAll } from '../../api/client'
 import { useAuth } from '../../auth/AuthContext'
+import { useDialog } from '../../components/Dialog'
 import { useFlash } from '../../components/Flash'
 import { EmptyState, ErrorState, Loading, PageHeader, SearchBox } from '../../components/ui'
 import { matches } from '../../lib/search'
@@ -12,6 +13,7 @@ const EMPTY = { full_name: '', email: '', password: '', role: 'staff', staff_id:
 export default function StaffUsers() {
   const { user: me } = useAuth()
   const flash = useFlash()
+  const ask = useDialog()
   const [query, setQuery] = useState('')
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState(EMPTY)
@@ -29,6 +31,12 @@ export default function StaffUsers() {
       flash(err.message, 'danger')
       return false
     }
+  }
+
+  // เปลี่ยนสิทธิ์หรือปิดบัญชีมีผลทันที จึงถามยืนยันก่อน
+  const changeUser = async (u, patch, title, message, confirmLabel, doneMessage) => {
+    const ok = await ask({ title, message, confirmLabel, danger: patch.is_active === false || patch.role === 'admin' })
+    if (ok) act(() => api(`/auth/users/${u.id}`, { method: 'PATCH', json: patch }), doneMessage)
   }
 
   const onCreate = async (e) => {
@@ -54,7 +62,7 @@ export default function StaffUsers() {
       </PageHeader>
 
       <div className={`expandable-panel ${showForm ? 'show' : ''}`}>
-        <h3 style={{ marginBottom: '1.25rem' }}>Create Staff / Admin Account</h3>
+        <h2 className="section-title" style={{ marginBottom: '1.25rem' }}>Create Staff / Admin Account</h2>
         <form onSubmit={onCreate}>
           <div className="grid grid-3">
             <div className="form-group" style={{ marginBottom: 0 }}>
@@ -133,7 +141,14 @@ export default function StaffUsers() {
                       disabled={u.id === me.id}
                       style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem' }}
                       onChange={(e) =>
-                        act(() => api(`/auth/users/${u.id}`, { method: 'PATCH', json: { role: e.target.value } }), `${u.full_name} is now ${e.target.value}`)
+                        changeUser(
+                          u,
+                          { role: e.target.value },
+                          `Change ${u.full_name} to ${e.target.value}?`,
+                          `${u.email} changes from ${u.role} to ${e.target.value} and gets that role's access right away.`,
+                          `Make ${e.target.value}`,
+                          `${u.full_name} is now ${e.target.value}`,
+                        )
                       }
                     >
                       {ROLES.map((r) => (
@@ -150,10 +165,16 @@ export default function StaffUsers() {
                       checked={u.is_active}
                       disabled={u.id === me.id}
                       onChange={(e) =>
-                        act(
-                          () => api(`/auth/users/${u.id}`, { method: 'PATCH', json: { is_active: e.target.checked } }),
-                          `${u.full_name} ${e.target.checked ? 'activated' : 'deactivated'}`,
-                        )
+                        e.target.checked
+                          ? changeUser(u, { is_active: true }, `Activate ${u.full_name}?`, `${u.email} can sign in again.`, 'Activate', `${u.full_name} activated`)
+                          : changeUser(
+                              u,
+                              { is_active: false },
+                              `Deactivate ${u.full_name}?`,
+                              `${u.email} can no longer sign in. Their requests and bookings stay in the system.`,
+                              'Deactivate',
+                              `${u.full_name} deactivated`,
+                            )
                       }
                     />
                   </td>

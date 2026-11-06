@@ -49,3 +49,13 @@ export const EQUIPMENT_STATUSES = ['available', 'in_use', 'maintenance', 'broken
 export const ALLOWED_UPLOADS = '.jpg,.jpeg,.png,.gif,.webp,.pdf,.docx,.xlsx'
 export const MAX_FILES = 5
 export const MAX_FILE_MB = 10
+
+/** ชั่วโมง (ทศนิยม) -> "under 1 hour" / "5 hours" / "2.5 days" */
+export function formatDuration(hours) {
+  if (hours < 1) return 'under 1 hour'
+  if (hours < 48) {
+    const h = Math.round(hours)
+    return `${h} ${h === 1 ? 'hour' : 'hours'}`
+  }
+  return `${(hours / 24).toFixed(1)} days`
+}

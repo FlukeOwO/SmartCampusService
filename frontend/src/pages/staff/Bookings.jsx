@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { listAll } from '../../api/client'
-import { useFlash } from '../../components/Flash'
-import { EmptyState, ErrorState, Loading, PageHeader, SearchBox, StatusBadge, TabPills } from '../../components/ui'
+import { useDialog } from '../../components/Dialog'
+import { ActionButton, EmptyState, ErrorState, Loading, PageHeader, SearchBox, StatusBadge, TabPills } from '../../components/ui'
 import { formatDateTime } from '../../lib/format'
 import { approveBooking, cancelBooking, rejectBooking } from '../../lib/staffActions'
+import { useAction } from '../../lib/useAction'
 import { matches } from '../../lib/search'
 import { useApi } from '../../lib/useApi'
 import { describeBooking, useResources } from '../../lib/useResources'
@@ -19,7 +20,7 @@ const TABS = [
 ]
 
 export default function StaffBookings() {
-  const flash = useFlash()
+  const ask = useDialog()
   const userName = useUserNames()
   const { lookup } = useResources()
   const [params, setParams] = useSearchParams()
@@ -30,16 +31,7 @@ export default function StaffBookings() {
     [status],
   )
 
-  const act = async (promise, message) => {
-    if (!promise) return
-    try {
-      await promise
-      flash(message, 'success')
-      reload()
-    } catch (err) {
-      flash(err.message, 'danger')
-    }
-  }
+  const { run, busyKey } = useAction(reload)
 
   const rows = (data || [])
     .map((b) => ({ ...b, item: describeBooking(b, lookup) }))
@@ -99,19 +91,17 @@ export default function StaffBookings() {
                     <div className="quick-action-group">
                       {booking.status === 'pending' && (
                         <>
-                          <button type="button" className="btn-icon btn-approve" title="Approve Reservation" aria-label="Approve reservation"
-                            onClick={() => act(approveBooking(booking.id), `Booking #${booking.id} approved`)}>
-                            <i className="fa-solid fa-check" />
-                          </button>
-                          <button type="button" className="btn-icon btn-reject" title="Reject Reservation" aria-label="Reject reservation"
-                            onClick={() => act(rejectBooking(booking.id), `Booking #${booking.id} rejected`)}>
-                            <i className="fa-solid fa-xmark" />
-                          </button>
+                          <ActionButton icon="fa-check" className="btn-approve" label={`Approve booking #${booking.id}`}
+                            busy={busyKey === `${booking.id}:approve`} disabled={busyKey !== null}
+                            onClick={() => run(`${booking.id}:approve`, () => approveBooking(booking.id), `Booking #${booking.id} approved`)} />
+                          <ActionButton icon="fa-xmark" className="btn-reject" label={`Reject booking #${booking.id}`}
+                            busy={busyKey === `${booking.id}:reject`} disabled={busyKey !== null}
+                            onClick={() => run(`${booking.id}:reject`, () => rejectBooking(ask, booking), `Booking #${booking.id} rejected`)} />
                         </>
                       )}
                       {['pending', 'confirmed'].includes(booking.status) && (
-                        <button type="button" className="button button-sm danger-button" style={{ padding: '0.25rem 0.6rem' }}
-                          onClick={() => act(cancelBooking(booking.id), `Booking #${booking.id} cancelled`)}>
+                        <button type="button" className="button button-sm danger-button" aria-disabled={busyKey !== null || undefined}
+                          onClick={() => run(`${booking.id}:cancel`, () => cancelBooking(ask, booking), `Booking #${booking.id} cancelled`)}>
                           Cancel
                         </button>
                       )}

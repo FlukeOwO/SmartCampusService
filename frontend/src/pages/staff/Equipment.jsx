@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { api } from '../../api/client'
+import { useDialog } from '../../components/Dialog'
 import { useFlash } from '../../components/Flash'
 import { EmptyState, ErrorState, Loading, PageHeader, SearchBox } from '../../components/ui'
 import { EQUIPMENT_STATUSES, statusLabel } from '../../lib/format'
@@ -10,6 +11,7 @@ const EMPTY = { equipment_code: '', equipment_name: '', equipment_type: '', desc
 
 export default function StaffEquipment() {
   const flash = useFlash()
+  const ask = useDialog()
   const { equipments, error, loading, reload } = useResources()
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState(EMPTY)
@@ -55,9 +57,9 @@ export default function StaffEquipment() {
       </PageHeader>
 
       <div className={`expandable-panel ${showForm ? 'show' : ''}`}>
-        <h3 style={{ marginBottom: '1.25rem' }}>
+        <h2 className="section-title" style={{ marginBottom: '1.25rem' }}>
           <i className="fa-solid fa-plus" style={{ color: 'var(--primary)' }} /> Register New Equipment
-        </h3>
+        </h2>
         <form onSubmit={onCreate}>
           <div className="grid grid-3">
             <div className="form-group" style={{ marginBottom: 0 }}>
@@ -153,9 +155,8 @@ export default function StaffEquipment() {
                     <button
                       type="button"
                       className="button button-sm danger-button"
-                      style={{ padding: '0.25rem 0.6rem' }}
-                      onClick={() =>
-                        window.confirm(`Delete ${item.equipment_name}?`) &&
+                      onClick={async () =>
+                        (await ask({ title: `Delete ${item.equipment_name}?`, message: 'This cannot be undone. Equipment with any bookings cannot be deleted; set its status to retired instead.', confirmLabel: 'Delete', danger: true })) &&
                         act(() => api(`/inventory/equipments/${item.id}`, { method: 'DELETE' }), `Equipment '${item.equipment_name}' deleted`)
                       }
                     >

@@ -144,6 +144,16 @@ export default function CreateRequest() {
             <small className="muted">
               Up to {MAX_FILES} files, {MAX_FILE_MB} MB each: images, PDF, Word or Excel.
             </small>
+            {files.length > 0 && (
+              <ul className="file-list" aria-label="Selected files">
+                {files.map((f) => (
+                  <li key={f.name}>
+                    <i className="fa-regular fa-file" /> {f.name}{' '}
+                    <span className="muted">({f.size > 1024 * 1024 ? `${(f.size / 1024 / 1024).toFixed(1)} MB` : `${Math.ceil(f.size / 1024)} KB`})</span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
 
           <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1.5rem' }}>

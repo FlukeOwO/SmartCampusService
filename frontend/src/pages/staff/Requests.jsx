@@ -2,11 +2,12 @@ import { Fragment, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { listAll } from '../../api/client'
 import { useAuth } from '../../auth/AuthContext'
-import { useFlash } from '../../components/Flash'
+import { useDialog } from '../../components/Dialog'
 import RequestDetail from '../../components/RequestDetail'
-import { EmptyState, ErrorState, Loading, PageHeader, SearchBox, StatusBadge, TabPills } from '../../components/ui'
+import { ActionButton, EmptyState, ErrorState, Loading, PageHeader, SearchBox, StatusBadge, TabPills } from '../../components/ui'
 import { formatDateTime, statusLabel } from '../../lib/format'
-import { REQUEST_NEXT, assignRequest, updateRequestStatus } from '../../lib/staffActions'
+import { REQUEST_ACTION, REQUEST_NEXT, assignRequest, updateRequestStatus } from '../../lib/staffActions'
+import { useAction } from '../../lib/useAction'
 import { matches } from '../../lib/search'
 import { useApi } from '../../lib/useApi'
 import { useUserNames } from '../../lib/useUserNames'
@@ -14,21 +15,16 @@ import { useUserNames } from '../../lib/useUserNames'
 const TABS = [
   { value: 'all', label: 'All' },
   { value: 'pending', label: 'Pending', icon: 'fa-clock', color: '#fbbf24' },
-  { value: 'in_progress', label: 'In Progress', icon: 'fa-spinner', color: '#38bdf8' },
+  { value: 'in_progress', label: 'In Progress', icon: 'fa-play', color: '#0284c7' },
   { value: 'completed', label: 'Completed', icon: 'fa-check', color: '#34d399' },
   { value: 'rejected', label: 'Rejected', icon: 'fa-xmark', color: '#f87171' },
   { value: 'cancelled', label: 'Cancelled', icon: 'fa-ban', color: '#94a3b8' },
 ]
 
-const ACTION = {
-  in_progress: { icon: 'fa-spinner', className: 'btn-progress', title: 'Start progress' },
-  completed: { icon: 'fa-check', className: 'btn-approve', title: 'Mark completed' },
-  rejected: { icon: 'fa-xmark', className: 'btn-reject', title: 'Reject request' },
-}
 
 export default function StaffRequests() {
   const { user } = useAuth()
-  const flash = useFlash()
+  const ask = useDialog()
   const userName = useUserNames()
   const [params, setParams] = useSearchParams()
   const status = params.get('status') || 'all'
@@ -39,16 +35,7 @@ export default function StaffRequests() {
     [status],
   )
 
-  const act = async (promise, message) => {
-    if (!promise) return
-    try {
-      await promise
-      flash(message, 'success')
-      reload()
-    } catch (err) {
-      flash(err.message, 'danger')
-    }
-  }
+  const { run, busyKey } = useAction(reload)
 
   const rows = (data || []).filter((r) => matches(query, r.title, r.request_number, r.request_type, userName(r.user_id)))
 
@@ -91,8 +78,7 @@ export default function StaffRequests() {
                     <td>
                       <button
                         type="button"
-                        className="btn-dismiss"
-                        style={{ fontWeight: 600, color: 'var(--text-primary)', textAlign: 'left', padding: 0 }}
+                        className="row-toggle"
                         onClick={() => setOpenId(openId === item.id ? null : item.id)}
                         aria-expanded={openId === item.id}
                       >
@@ -110,23 +96,21 @@ export default function StaffRequests() {
                     <td>
                       <div className="quick-action-group">
                         {(REQUEST_NEXT[item.status] || []).map((next) => (
-                          <button
+                          <ActionButton
                             key={next}
-                            type="button"
-                            className={`btn-icon ${ACTION[next].className}`}
-                            title={ACTION[next].title}
-                            aria-label={ACTION[next].title}
-                            onClick={() => act(updateRequestStatus(item.id, next), `${item.request_number}: ${statusLabel(next)}`)}
-                          >
-                            <i className={`fa-solid ${ACTION[next].icon}`} />
-                          </button>
+                            {...REQUEST_ACTION[next]}
+                            label={`${REQUEST_ACTION[next].title}: ${item.request_number}`}
+                            busy={busyKey === `${item.id}:${next}`}
+                            disabled={busyKey !== null}
+                            onClick={() => run(`${item.id}:${next}`, () => updateRequestStatus(ask, item, next), `${item.request_number}: ${statusLabel(next)}`)}
+                          />
                         ))}
                         {REQUEST_NEXT[item.status] && item.assigned_staff_id !== user.id && (
                           <button
                             type="button"
                             className="button button-sm secondary-button"
-                            style={{ padding: '0.25rem 0.6rem' }}
-                            onClick={() => act(assignRequest(item.id, user.id), `${item.request_number} assigned to you`)}
+                            aria-disabled={busyKey !== null || undefined}
+                            onClick={() => run(`${item.id}:assign`, () => assignRequest(item.id, user.id), `${item.request_number} assigned to you`)}
                           >
                             Assign to me
                           </button>

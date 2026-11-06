@@ -94,7 +94,7 @@ export default function StudentDashboard() {
       <div className="grid grid-2">
         <div className="card">
           <div className="card-title-row">
-            <h3>Recent Activity</h3>
+            <h2 className="section-title">Recent Activity</h2>
             <Link to="/student/requests" style={{ fontSize: '0.82rem' }}>
               View all
             </Link>
@@ -129,19 +129,18 @@ export default function StudentDashboard() {
 
         <div className="card">
           <div className="card-title-row">
-            <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+            <h2 className="section-title" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
               Notifications
               {data?.notifications.total > 0 && (
-                <span className="role-tag" style={{ fontSize: '0.68rem' }}>
+                <span className="count-tag">
                   {data.notifications.total}
                 </span>
               )}
-            </h3>
+            </h2>
             {data?.notifications.total > 0 && (
               <button
                 type="button"
                 className="button button-sm secondary-button"
-                style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }}
                 onClick={() => markRead('/notifications/read/all', 'POST')}
               >
                 Mark All Read
@@ -161,11 +160,11 @@ export default function StudentDashboard() {
                     <button
                       type="button"
                       className="btn-dismiss"
-                      title="Dismiss"
+                      title="Mark as read"
                       aria-label="Mark as read"
                       onClick={() => markRead(`/notifications/${n.id}/read`, 'PATCH')}
                     >
-                      <i className="fa-solid fa-xmark" />
+                      <i className="fa-solid fa-check" />
                     </button>
                   </div>
                 </li>

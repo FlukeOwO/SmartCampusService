@@ -817,7 +817,6 @@ tr:hover td {
 .notification-item {
     background: #ffffff;
     border: 1px solid var(--border-card);
-    border-left: 3px solid var(--primary);
     padding: 0.75rem 1rem;
     border-radius: var(--radius-sm);
     display: flex;

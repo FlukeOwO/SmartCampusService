@@ -1,14 +1,15 @@
 import { Link } from 'react-router-dom'
 import { api } from '../../api/client'
-import { useFlash } from '../../components/Flash'
-import { EmptyState, ErrorState, Loading, PageHeader, StatCard } from '../../components/ui'
-import { formatShort, statusLabel } from '../../lib/format'
-import { approveBooking, rejectBooking, updateRequestStatus } from '../../lib/staffActions'
+import { useDialog } from '../../components/Dialog'
+import { ActionButton, EmptyState, ErrorState, Loading, PageHeader, StatCard } from '../../components/ui'
+import { formatDuration, formatShort, statusLabel } from '../../lib/format'
+import { REQUEST_ACTION, approveBooking, rejectBooking, updateRequestStatus } from '../../lib/staffActions'
+import { useAction } from '../../lib/useAction'
 import { useApi } from '../../lib/useApi'
 import { describeBooking, useResources } from '../../lib/useResources'
 
 export default function StaffDashboard() {
-  const flash = useFlash()
+  const ask = useDialog()
   const { rooms, equipments, lookup } = useResources()
   const { data, error, loading, reload } = useApi(async () => {
     const [summary, requests, bookings] = await Promise.all([
@@ -19,16 +20,7 @@ export default function StaffDashboard() {
     return { summary, requests, bookings }
   }, [])
 
-  const act = async (promise, message) => {
-    if (!promise) return
-    try {
-      await promise
-      flash(message, 'success')
-      reload()
-    } catch (err) {
-      flash(err.message, 'danger')
-    }
-  }
+  const { run, busyKey } = useAction(reload)
 
   const s = data?.summary
   const pendingRequests = s?.requests.by_status.pending ?? 0
@@ -38,7 +30,10 @@ export default function StaffDashboard() {
     <>
       <PageHeader title="Staff & Admin Dashboard" subtitle="Campus operations control center with quick review and approval workflows.">
         <Link to="/staff/requests?status=pending" className="button">
-          <i className="fa-solid fa-clock" /> Review Pending ({pendingRequests + pendingBookings})
+          <i className="fa-solid fa-clock" /> {pendingRequests} pending {pendingRequests === 1 ? 'request' : 'requests'}
+        </Link>
+        <Link to="/staff/bookings?status=pending" className="button secondary-button">
+          <i className="fa-solid fa-calendar-check" /> {pendingBookings} pending {pendingBookings === 1 ? 'booking' : 'bookings'}
         </Link>
       </PageHeader>
 
@@ -97,7 +92,7 @@ export default function StaffDashboard() {
         <div className="grid grid-2">
           <div className="card">
             <div className="card-title-row">
-              <h3>Pending Requests</h3>
+              <h2 className="section-title">Pending Requests</h2>
               <Link to="/staff/requests?status=pending" style={{ fontSize: '0.82rem' }}>
                 View all
               </Link>
@@ -117,14 +112,16 @@ export default function StaffDashboard() {
                       </small>
                     </div>
                     <div className="quick-action-group">
-                      <button type="button" className="btn-icon btn-progress" title="Mark In Progress" aria-label="Mark in progress"
-                        onClick={() => act(updateRequestStatus(req.id, 'in_progress'), `${req.request_number} is in progress`)}>
-                        <i className="fa-solid fa-spinner" />
-                      </button>
-                      <button type="button" className="btn-icon btn-reject" title="Reject" aria-label="Reject request"
-                        onClick={() => act(updateRequestStatus(req.id, 'rejected'), `${req.request_number} rejected`)}>
-                        <i className="fa-solid fa-xmark" />
-                      </button>
+                      {['in_progress', 'rejected'].map((next) => (
+                        <ActionButton
+                          key={next}
+                          {...REQUEST_ACTION[next]}
+                          label={`${REQUEST_ACTION[next].title}: ${req.request_number}`}
+                          busy={busyKey === `r${req.id}:${next}`}
+                          disabled={busyKey !== null}
+                          onClick={() => run(`r${req.id}:${next}`, () => updateRequestStatus(ask, req, next), `${req.request_number}: ${statusLabel(next)}`)}
+                        />
+                      ))}
                     </div>
                   </div>
                 ))}
@@ -134,7 +131,7 @@ export default function StaffDashboard() {
 
           <div className="card">
             <div className="card-title-row">
-              <h3>Pending Bookings</h3>
+              <h2 className="section-title">Pending Bookings</h2>
               <Link to="/staff/bookings?status=pending" style={{ fontSize: '0.82rem' }}>
                 View all
               </Link>
@@ -154,14 +151,12 @@ export default function StaffDashboard() {
                       </small>
                     </div>
                     <div className="quick-action-group">
-                      <button type="button" className="btn-icon btn-approve" title="Approve Booking" aria-label="Approve booking"
-                        onClick={() => act(approveBooking(b.id), `Booking #${b.id} approved`)}>
-                        <i className="fa-solid fa-check" />
-                      </button>
-                      <button type="button" className="btn-icon btn-reject" title="Reject Booking" aria-label="Reject booking"
-                        onClick={() => act(rejectBooking(b.id), `Booking #${b.id} rejected`)}>
-                        <i className="fa-solid fa-xmark" />
-                      </button>
+                      <ActionButton icon="fa-check" className="btn-approve" label={`Approve booking #${b.id}`}
+                        busy={busyKey === `b${b.id}:approve`} disabled={busyKey !== null}
+                        onClick={() => run(`b${b.id}:approve`, () => approveBooking(b.id), `Booking #${b.id} approved`)} />
+                      <ActionButton icon="fa-xmark" className="btn-reject" label={`Reject booking #${b.id}`}
+                        busy={busyKey === `b${b.id}:reject`} disabled={busyKey !== null}
+                        onClick={() => run(`b${b.id}:reject`, () => rejectBooking(ask, b), `Booking #${b.id} rejected`)} />
                     </div>
                   </div>
                 ))}
@@ -170,7 +165,7 @@ export default function StaffDashboard() {
           </div>
 
           <div className="card">
-            <h3 style={{ marginBottom: '0.85rem' }}>Top Rooms (last 30 days)</h3>
+            <h2 className="section-title" style={{ marginBottom: '0.85rem' }}>Top Rooms (last 30 days)</h2>
             {s.top_rooms.length === 0 ? (
               <EmptyState compact text="No room bookings yet." />
             ) : (
@@ -180,7 +175,9 @@ export default function StaffDashboard() {
                     <span className="list-item-title">
                       {room.room_number} {room.room_name}
                     </span>
-                    <span className="role-tag">{room.bookings} bookings</span>
+                    <span className="count-tag">
+                      {room.bookings} {room.bookings === 1 ? 'booking' : 'bookings'}
+                    </span>
                   </div>
                 ))}
               </div>
@@ -188,7 +185,7 @@ export default function StaffDashboard() {
           </div>
 
           <div className="card">
-            <h3 style={{ marginBottom: '0.85rem' }}>Requests by Status</h3>
+            <h2 className="section-title" style={{ marginBottom: '0.85rem' }}>Requests by Status</h2>
             <div className="stack">
               {Object.entries(s.requests.by_status).map(([status, count]) => (
                 <div key={status} className="list-item">
@@ -197,7 +194,7 @@ export default function StaffDashboard() {
                 </div>
               ))}
               {s.requests.avg_resolution_hours !== null && (
-                <small className="muted">Average resolution time: {s.requests.avg_resolution_hours} hours</small>
+                <small className="muted">Average resolution time: {formatDuration(s.requests.avg_resolution_hours)}</small>
               )}
             </div>
           </div>

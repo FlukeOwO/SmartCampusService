@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { api } from '../../api/client'
+import { useDialog } from '../../components/Dialog'
 import { useFlash } from '../../components/Flash'
 import { EmptyState, ErrorState, Loading, PageHeader, SearchBox } from '../../components/ui'
 import { ROOM_STATUSES, ROOM_TYPES, statusLabel } from '../../lib/format'
@@ -10,6 +11,7 @@ const EMPTY = { room_number: '', room_name: '', building: '', floor: 1, capacity
 
 export default function StaffRooms() {
   const flash = useFlash()
+  const ask = useDialog()
   const { rooms, error, loading, reload } = useResources()
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState(EMPTY)
@@ -55,9 +57,9 @@ export default function StaffRooms() {
       </PageHeader>
 
       <div className={`expandable-panel ${showForm ? 'show' : ''}`}>
-        <h3 style={{ marginBottom: '1.25rem' }}>
+        <h2 className="section-title" style={{ marginBottom: '1.25rem' }}>
           <i className="fa-solid fa-plus" style={{ color: 'var(--primary)' }} /> Create New Room
-        </h3>
+        </h2>
         <form onSubmit={onCreate}>
           <div className="grid grid-3">
             <div className="form-group" style={{ marginBottom: 0 }}>
@@ -165,9 +167,8 @@ export default function StaffRooms() {
                     <button
                       type="button"
                       className="button button-sm danger-button"
-                      style={{ padding: '0.25rem 0.6rem' }}
-                      onClick={() =>
-                        window.confirm(`Delete room ${room.room_number}?`) &&
+                      onClick={async () =>
+                        (await ask({ title: `Delete room ${room.room_number}?`, message: 'This cannot be undone. A room with any bookings cannot be deleted; set its status to closed instead.', confirmLabel: 'Delete', danger: true })) &&
                         act(() => api(`/inventory/rooms/${room.id}`, { method: 'DELETE' }), `Room '${room.room_number}' deleted`)
                       }
                     >
