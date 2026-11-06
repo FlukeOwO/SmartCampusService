@@ -4,7 +4,7 @@ import { listAll } from '../../api/client'
 import { useAuth } from '../../auth/AuthContext'
 import { useDialog } from '../../components/Dialog'
 import RequestDetail from '../../components/RequestDetail'
-import { ActionButton, EmptyState, ErrorState, Loading, PageHeader, SearchBox, StatusBadge, TabPills } from '../../components/ui'
+import { ActionButton, Drawer, EmptyState, ErrorState, Loading, PageHeader, SearchBox, StatusBadge, TabPills } from '../../components/ui'
 import { formatDateTime, statusLabel } from '../../lib/format'
 import { REQUEST_ACTION, REQUEST_NEXT, assignRequest, updateRequestStatus } from '../../lib/staffActions'
 import { useAction } from '../../lib/useAction'
@@ -99,7 +99,7 @@ export default function StaffRequests() {
                       <button
                         type="button"
                         className="row-toggle"
-                        onClick={() => setOpenId(openId === item.id ? null : item.id)}
+                        onClick={() => setOpenId(item.id)}
                         aria-expanded={openId === item.id}
                       >
                         <i className={`fa-solid fa-chevron-${openId === item.id ? 'up' : 'down'}`} /> {item.title}
@@ -142,13 +142,7 @@ export default function StaffRequests() {
                       </div>
                     </td>
                   </tr>
-                  {openId === item.id && (
-                    <tr className="detail-row">
-                      <td colSpan={7}>
-                        <RequestDetail requestId={item.id} isOwner={false} />
-                      </td>
-                    </tr>
-                  )}
+
                 </Fragment>
               ))}
               {rows.length === 0 && (
@@ -161,6 +155,12 @@ export default function StaffRequests() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {openId && (
+        <Drawer title="รายละเอียดคำร้อง" onClose={() => setOpenId(null)} wide>
+          <RequestDetail requestId={openId} isOwner={false} onChanged={reload} />
+        </Drawer>
       )}
     </>
   )
