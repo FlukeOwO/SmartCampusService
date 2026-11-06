@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { listAll } from '../../api/client'
 import { useDialog } from '../../components/Dialog'
@@ -10,13 +10,13 @@ import { useAction } from '../../lib/useAction'
 import { useApi } from '../../lib/useApi'
 import { describeBooking, useResources } from '../../lib/useResources'
 
-const TABS = [
-  { value: 'all', label: 'All' },
-  { value: 'pending', label: 'Pending', icon: 'fa-clock', color: '#fbbf24' },
-  { value: 'confirmed', label: 'Confirmed', icon: 'fa-check', color: '#34d399' },
-  { value: 'rejected', label: 'Rejected', icon: 'fa-xmark', color: '#f87171' },
-  { value: 'cancelled', label: 'Cancelled', icon: 'fa-ban', color: '#94a3b8' },
-]
+const STATUS_LABELS = {
+  all: 'ทั้งหมด',
+  pending: 'รออนุมัติ',
+  confirmed: 'ยืนยันแล้ว',
+  rejected: 'ปฏิเสธ',
+  cancelled: 'ยกเลิก',
+}
 
 export default function BookingHistory() {
   const ask = useDialog()
@@ -27,21 +27,36 @@ export default function BookingHistory() {
   const { run, busyKey } = useAction(reload)
 
 
-  const rows = (data || [])
+  const all = data || []
+  const counts = useMemo(() => {
+    const c = { all: all.length, pending: 0, confirmed: 0, rejected: 0, cancelled: 0 }
+    all.forEach((b) => { if (c[b.status] !== undefined) c[b.status] += 1 })
+    return c
+  }, [all])
+
+  const TABS = [
+    { value: 'all', label: `${STATUS_LABELS.all} (${counts.all})` },
+    { value: 'pending', label: `${STATUS_LABELS.pending} (${counts.pending})`, icon: 'fa-clock' },
+    { value: 'confirmed', label: `${STATUS_LABELS.confirmed} (${counts.confirmed})`, icon: 'fa-check' },
+    { value: 'rejected', label: `${STATUS_LABELS.rejected} (${counts.rejected})`, icon: 'fa-xmark' },
+    { value: 'cancelled', label: `${STATUS_LABELS.cancelled} (${counts.cancelled})`, icon: 'fa-ban' },
+  ]
+
+  const rows = all
     .map((b) => ({ ...b, item: describeBooking(b, lookup) }))
     .filter((b) => (tab === 'all' || b.status === tab) && matches(query, b.title, b.item.name, b.item.meta))
 
   return (
     <>
-      <PageHeader icon="fa-clock-rotate-left" title="My Booking History" subtitle="Track and review all your room and equipment reservations.">
+      <PageHeader icon="fa-clock-rotate-left" title="ประวัติการจอง" subtitle="ติดตามและตรวจสอบการจองห้องและอุปกรณ์ของคุณ">
         <Link to="/student/resources" className="button">
-          <i className="fa-solid fa-calendar-plus" /> New Reservation
+          <i className="fa-solid fa-calendar-plus" /> จองใหม่
         </Link>
       </PageHeader>
 
       <div className="toolbar-container">
-        <TabPills tabs={TABS.map((t) => (t.value === 'all' ? { ...t, label: `All (${data?.length ?? 0})` } : t))} active={tab} onChange={setTab} />
-        <SearchBox value={query} onChange={setQuery} placeholder="Search reservations..." />
+        <TabPills tabs={TABS} active={tab} onChange={setTab} />
+        <SearchBox value={query} onChange={setQuery} placeholder="ค้นหาการจอง..." />
       </div>
 
       {error && <ErrorState error={error} onRetry={reload} />}
@@ -52,12 +67,12 @@ export default function BookingHistory() {
           <table>
             <thead>
               <tr>
-                <th style={{ width: 70 }}>ID</th>
-                <th>Type</th>
-                <th>Reserved Item</th>
-                <th>Start Time</th>
-                <th>End Time</th>
-                <th>Status</th>
+                <th style={{ width: 70 }}>เลขที่</th>
+                <th>ประเภท</th>
+                <th>รายการ</th>
+                <th>เวลาเริ่ม</th>
+                <th>เวลาสิ้นสุด</th>
+                <th>สถานะ</th>
                 <th style={{ width: 110 }}>Action</th>
               </tr>
             </thead>
