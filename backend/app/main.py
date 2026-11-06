@@ -23,10 +23,11 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.common.exceptions import AppException
 from app.core.config import settings
 from app.core.database import check_db_connection, close_db_connection
-from app.core.logging import setup_logging
+from app.core.logging import TraceContextMiddleware, setup_logging
 from app.core.rate_limit import limiter
 from app.modules.auth.router import router as auth_router
 from app.modules.bookings.router import router as bookings_router
+from app.modules.dashboard.router import router as dashboard_router
 from app.modules.inventory.router import router as inventory_router
 from app.modules.notifications.router import router as notifications_router
 from app.modules.requests.router import router as requests_router
@@ -71,6 +72,7 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type"],
 )
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.ALLOWED_HOSTS)
+app.add_middleware(TraceContextMiddleware)
 
 
 # -----------------------------------------------------------------------------
@@ -143,6 +145,7 @@ app.include_router(auth_router, prefix=f"{settings.API_PREFIX}/auth", tags=["Aut
 app.include_router(requests_router, prefix=f"{settings.API_PREFIX}/requests", tags=["Requests"])
 app.include_router(bookings_router, prefix=f"{settings.API_PREFIX}/bookings", tags=["Bookings"])
 app.include_router(inventory_router, prefix=f"{settings.API_PREFIX}/inventory", tags=["Inventory"])
+app.include_router(dashboard_router, prefix=f"{settings.API_PREFIX}/dashboard", tags=["Dashboard"])
 app.include_router(
     notifications_router, prefix=f"{settings.API_PREFIX}/notifications", tags=["Notifications"]
 )

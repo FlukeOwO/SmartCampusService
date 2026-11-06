@@ -1,6 +1,7 @@
 # Deployment — Backend บน Google Cloud (Cloud Run + Cloud SQL)
 
-อ้างอิงเอกสารออกแบบ *Smart Campus — Backend & Cloud Design (GCP)*
+อ้างอิงเอกสารออกแบบ *Smart Campus — Backend & Cloud Design (GCP)* และ [docs/CLOUD_DESIGN.md](docs/CLOUD_DESIGN.md)
+(เหตุผลการเลือกบริการ แผนภาพ และสคริปต์สาธิต)
 
 ```
 GitHub Actions ──(WIF, ไม่มี JSON key)──► Artifact Registry  campus/api:<git-sha>
@@ -18,7 +19,8 @@ GitHub Actions ──(WIF, ไม่มี JSON key)──► Artifact Registry 
 | Migration | Cloud Run Job `campus-migrate` | `campus-migrate-dev` |
 | Seed | Cloud Run Job `campus-seed` (รันมือครั้งเดียว) | `campus-seed-dev` |
 | Database | Cloud SQL `campus-db` → DB `smart_campus`, user `campus_app` | DB `smart_campus_dev`, user `campus_app_dev` |
-| ไฟล์แนบ | `gs://<project>-campus-uploads` | `...-campus-uploads-dev` |
+| ไฟล์แนบ | `gs://<project>-campus-uploads` (private, lifecycle Nearline 30 วัน / Coldline 180 วัน) | `...-campus-uploads-dev` |
+| Frontend | `gs://<project>-campus-web` (public) | `...-campus-web-dev` |
 | Secrets | `db-password`, `jwt-secret-key` | `...-dev` |
 | Runtime SA | `campus-api-sa` | `campus-api-dev-sa` |
 | Image | `asia-southeast1-docker.pkg.dev/<project>/campus/api:<git-sha>` | เหมือนกัน |
@@ -30,11 +32,15 @@ git clone https://github.com/FlukeOwO/SmartCampusService && cd SmartCampusServic
 export PROJECT_ID=smart-campus-prod          # REGION ค่าเริ่มต้น asia-southeast1
 
 ./setup.sh shared                             # API, VPC, PSA, Cloud SQL, Artifact Registry, WIF, github-deployer
-./setup.sh env dev  https://<frontend-dev-domain>
-./setup.sh env prod https://<frontend-domain>
+./setup.sh env dev                            # API, DB, secrets, buckets, jobs ของ dev
+./setup.sh env prod
 ./setup.sh seed prod admin@<university-domain>   # สร้าง admin คนแรก (ถามรหัสผ่าน, เก็บใน Secret Manager)
-./setup.sh budget <BILLING_ACCOUNT_ID>        # budget $300 (50/75/90%) + $20/เดือน
+./setup.sh dashboard prod                     # Cloud Monitoring dashboard (และ dev)
+./setup.sh budget <BILLING_ACCOUNT_ID>        # budget $300 (50/75/90% + forecast 100%) + $20/เดือน
 ```
+
+`env` ตั้ง `CORS_ORIGINS=https://storage.googleapis.com` ให้ตรงกับเว็บที่โฮสต์บน bucket
+ถ้า frontend ใช้โดเมนอื่น ส่งเป็นอาร์กิวเมนต์ที่ 3 เช่น `./setup.sh env prod https://campus.example.com`
 
 สคริปต์รันซ้ำได้ (resource ที่มีแล้วจะข้าม) จากนั้นตั้ง **startup probe** `HTTP GET /healthz`
 ที่ Console › Cloud Run › service › Edit › Health checks ทั้ง dev และ prod
@@ -55,11 +61,13 @@ export PROJECT_ID=smart-campus-prod          # REGION ค่าเริ่ม�
 | `DEPLOYER_SA` | `github-deployer@<project>.iam.gserviceaccount.com` | เหมือนกัน |
 | `SERVICE_NAME` | `campus-api-dev` | `campus-api` |
 | `MIGRATE_JOB` | `campus-migrate-dev` | `campus-migrate` |
+| `WEB_BUCKET` | `<project>-campus-web-dev` | `<project>-campus-web` |
+| `API_BASE_URL` | `https://campus-api-dev-....run.app/api/v1` | `https://campus-api-....run.app/api/v1` |
 
 ค่าเหล่านี้ `setup.sh` พิมพ์ออกมาให้ตอนจบแต่ละขั้น
 
 สุดท้ายเปิดการ deploy: **Settings › Secrets and variables › Actions › Variables** (ระดับ repository)
-เพิ่ม `DEPLOY_ENABLED` = `true` — ถ้ายังไม่ตั้ง `backend-cd` จะถูกข้าม (skipped) ทุกครั้ง
+เพิ่ม `DEPLOY_ENABLED` = `true` — ถ้ายังไม่ตั้ง ขั้น deploy ของ `backend-cd` และ `frontend-cd` จะถูกข้าม (skipped) ทุกครั้ง
 ทำให้ทำงานบน local และ merge PR ได้ก่อนที่ cloud จะพร้อม
 
 **Branch protection**: `main` ห้าม push ตรง, merge ผ่าน PR จาก `dev`, ต้องผ่าน `backend-ci` + review 1 คน;
@@ -70,16 +78,22 @@ export PROJECT_ID=smart-campus-prod          # REGION ค่าเริ่ม�
 | Workflow | Trigger | ขั้นตอน |
 |---|---|---|
 | `.github/workflows/backend-ci.yml` | PR เข้า `dev`/`main`, push ที่แก้ `backend/**` | `ruff check` + `ruff format --check` → `alembic upgrade/downgrade/upgrade` → `pytest` (PostgreSQL 15) → `docker build --target production` |
-| `.github/workflows/backend-cd.yml` | push `dev` → env `dev`, push `main` → env `prod` | WIF auth → build + push `:<git-sha>` → migration job → deploy revision แบบ `--no-traffic` → smoke test `/healthz` บน tag URL → ย้าย traffic 100% |
+| `.github/workflows/backend-cd.yml` | push `dev` → env `dev`, push `main` → env `prod` | WIF auth → build + push `:<git-sha>` → migration job → deploy revision แบบ `--no-traffic` → smoke test `/healthz` บน tag URL → ย้าย traffic 100% (รันด้วยมือใส่ `traffic_percent` เพื่อทำ canary ได้) |
+| `.github/workflows/frontend-cd.yml` | PR/push ที่แก้ `frontend/**` | lint + build ทุกครั้ง · push `dev`/`main` → `vite build --base=/<bucket>/` → `gcloud storage rsync` ไป `WEB_BUCKET` → smoke test |
 
 จุดที่ pipeline หยุดได้ 3 จุด: **CI ไม่ผ่าน**, **migration ล้ม**, **smoke test ล้ม** —
 ทั้งสามกรณี revision เดิมยังรับ traffic อยู่ (deploy แบบ no-traffic จึงไม่ต้อง rollback อัตโนมัติ)
 
-### Rollback
+### Rollback, canary และงานดูแลระบบ (`infra/gcp/ops.sh`)
 
 ```bash
-gcloud run revisions list --service campus-api --region asia-southeast1
-gcloud run services update-traffic campus-api --region asia-southeast1 --to-revisions=<revision-เดิม>=100
+./ops.sh status   prod            # revision ที่รับ traffic + สถานะ DB
+./ops.sh rollback prod            # กลับ revision ก่อนหน้า 100% (หรือระบุชื่อ revision)
+./ops.sh canary   prod 10         # ส่ง 10% ไป revision ล่าสุด
+./ops.sh promote  prod            # revision ล่าสุด 100%
+./ops.sh db-ha    on|off          # Cloud SQL High Availability 2 zone (เปิดช่วงสาธิต)
+./ops.sh db-stop | db-start       # หยุด/เปิด DB ช่วงไม่ใช้งาน
+./ops.sh teardown                 # ลบ project หลังจบรายวิชา
 ```
 
 Migration ต้องเข้ากันได้กับโค้ดเวอร์ชันก่อน (expand → contract): เพิ่มคอลัมน์ใหม่แบบ nullable ก่อน
@@ -100,6 +114,7 @@ Migration ต้องเข้ากันได้กับโค้ดเว�
 | `CORS_ORIGINS` | env | URL ของ Frontend เท่านั้น |
 | `ALLOWED_HOSTS` | env | `*.run.app` (+ custom domain ถ้ามี) |
 | `LOG_LEVEL`, `LOG_FORMAT` | env | `INFO`, `json` |
+| `GCP_PROJECT_ID` | env | `<project>` (ผูก log กับ trace ของ request) |
 | `PORT` | Cloud Run | ห้ามตั้งทับ |
 
 เปลี่ยนค่า secret (rotate) แล้วต้อง deploy revision ใหม่ เพราะค่าจาก Secret Manager อ่านตอน instance เริ่ม:
@@ -117,9 +132,10 @@ prod 3×5 + dev 1×5 + migration job ≈ 21 connection ขณะที่ `db-f1
 ## 6. ประหยัดค่าใช้จ่าย
 
 - Cloud Run `min-instances=0` (scale-to-zero), request-based billing
-- ช่วงไม่ใช้ระบบนาน ๆ: `gcloud sql instances patch campus-db --activation-policy=NEVER` (เปิดคืน `ALWAYS`)
-- Artifact Registry เก็บแค่ 10 image ล่าสุด
-- จบรายวิชา: `gcloud projects delete <project>`
+- ช่วงไม่ใช้ระบบนาน ๆ: `./ops.sh db-stop` (เปิดคืน `./ops.sh db-start`)
+- Artifact Registry เก็บแค่ 10 image ล่าสุด, ไฟล์แนบเก่าย้ายไป storage class ที่ถูกกว่าอัตโนมัติ
+- Cloud SQL HA เปิดเฉพาะช่วงสาธิต (`./ops.sh db-ha on`, จบแล้ว `off`)
+- จบรายวิชา: `./ops.sh teardown`
 
 ## 7. Local development
 

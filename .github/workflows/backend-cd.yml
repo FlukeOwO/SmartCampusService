@@ -12,6 +12,11 @@ on:
     branches: [main, dev]
     paths: ["backend/**", ".github/workflows/backend-cd.yml"]
   workflow_dispatch:
+    inputs:
+      traffic_percent:
+        description: "Traffic to the new revision (100 = full rollout, e.g. 10 = canary; promote later with infra/gcp/ops.sh promote)"
+        required: false
+        default: "100"
 
 permissions:
   contents: read
@@ -84,10 +89,16 @@ jobs:
           echo "::error::Smoke test failed - traffic stays on the previous revision"
           exit 1
 
-      - name: Shift 100% traffic to new revision
+      - name: Shift traffic to new revision
+        env:
+          PERCENT: ${{ inputs.traffic_percent || '100' }}
         run: |
+          case "$PERCENT" in ''|*[!0-9]*) echo "::error::traffic_percent must be 1-100"; exit 1 ;; esac
+          if [ "$PERCENT" -lt 1 ] || [ "$PERCENT" -gt 100 ]; then
+            echo "::error::traffic_percent must be 1-100"; exit 1
+          fi
           gcloud run services update-traffic "$SERVICE" \
-            --to-revisions "${{ steps.deploy.outputs.revision }}=100"
+            --to-revisions "${{ steps.deploy.outputs.revision }}=$PERCENT"
 
       - name: Remove deployment tag
         if: always() && steps.deploy.outputs.tag != ''

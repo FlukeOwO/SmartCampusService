@@ -5,6 +5,7 @@ Request router - /api/v1/requests
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
+from fastapi import Request as HttpRequest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.base_models import Page, PageParams
@@ -130,7 +131,13 @@ async def add_attachments(
 
 
 @router.get("/{request_id}/attachments/{attachment_id}/url", response_model=SignedUrlResponse)
-async def attachment_url(request_id: int, attachment_id: int, user: CurrentUser, db: DB):
+async def attachment_url(
+    request_id: int, attachment_id: int, user: CurrentUser, db: DB, http_request: HttpRequest
+):
     """ออก Signed URL อายุสั้นหลังตรวจสิทธิ์แล้ว"""
     url = await RequestService(db).attachment_url(user, request_id, attachment_id)
+    if url.startswith("/"):
+        # local storage ตอบเป็น path (/storage/...) ต้องเติม origin ของ backend
+        # ไม่งั้น frontend ที่อยู่คนละ origin (localhost:5173) จะเปิดไม่เจอ
+        url = str(http_request.base_url).rstrip("/") + url
     return {"url": url, "expires_in_seconds": settings.SIGNED_URL_EXPIRE_MINUTES * 60}
