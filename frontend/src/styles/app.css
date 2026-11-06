@@ -338,3 +338,32 @@ select:focus {
 .timeline-dot.active { background: #0284c7; }
 .timeline-dot.done { background: #16a34a; }
 .timeline-dot.rejected { background: #dc2626; }
+
+/* Status bar chart */
+.status-bar {
+  display: flex;
+  height: 12px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg-subtle);
+}
+.status-bar-seg { height: 100%; }
+.status-bar-seg.status-pending { background: #f59e0b; }
+.status-bar-seg.status-in_progress { background: #0284c7; }
+.status-bar-seg.status-completed { background: #16a34a; }
+.status-bar-seg.status-rejected { background: #dc2626; }
+.status-bar-seg.status-cancelled { background: #94a3b8; }
+
+.rank {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  border-radius: 50%;
+  background: var(--primary-light);
+  color: var(--primary);
+  font-size: 0.75rem;
+  font-weight: 700;
+  margin-right: 0.4rem;
+}
