@@ -116,6 +116,18 @@ docker compose exec backend alembic upgrade head     # ใช้ migration ล�
 docker compose exec backend alembic downgrade -1     # ย้อน 1 ขั้น
 ```
 
+**รัน frontend นอก Docker** (hot reload เร็วกว่า, ต้องมี Node 22 หรือ 20.19 ขึ้นไป)
+ให้ `docker compose up -d db backend` แล้ว:
+
+```bash
+cd frontend
+npm install
+npm run dev          # http://localhost:5173 เรียก API ที่ http://localhost:8000/api/v1
+```
+
+Frontend อ่าน URL ของ API จาก `import.meta.env.VITE_API_BASE_URL` ห้ามเขียน localhost ตายตัวในโค้ด
+และใช้ HashRouter เพราะบน cloud โฮสต์บน Cloud Storage (ดู `.github/workflows/frontend-cd.yml`)
+
 **รัน backend โดยไม่ใช้ Docker** (ต้องมี PostgreSQL 15 และ Python 3.11 ขึ้นไป)
 
 ```bash
@@ -207,6 +219,10 @@ docker compose exec backend alembic current
 
 **ตารางหรือข้อมูลเพี้ยนหลังแก้ migration** ล้างแล้วเริ่มใหม่ด้วย `docker compose down -v`
 (ข้อมูลใน database หายทั้งหมด)
+
+**Frontend ใน Docker หา package ไม่เจอหลังเพิ่ม dependency** โฟลเดอร์ `node_modules` อยู่ใน volume
+ที่ไม่อัปเดตตาม `package.json` ให้ลบแล้ว build ใหม่:
+`docker compose rm -sf frontend && docker volume rm campus-frontend-node-modules && docker compose up -d --build frontend`
 
 **`pip install` ขึ้น `UnicodeDecodeError`** ไฟล์ `requirements.txt` ต้องเป็น UTF-8
 บน Windows PowerShell การใช้ `>` เขียนไฟล์จะได้ UTF-16 ให้ใช้ text editor บันทึกเป็น UTF-8 แทน

@@ -1,0 +1,12 @@
+# node_modules บนเครื่อง (Windows/macOS) มี native binary คนละ OS กับ container ห้าม copy เข้า image
+node_modules
+dist
+dist-ssr
+.vite
+*.local
+.env
+.env.*
+npm-debug.log*
+.git
+Dockerfile
+.dockerignore

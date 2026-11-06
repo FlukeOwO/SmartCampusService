@@ -99,7 +99,11 @@ async def test_attachment_validation_and_signed_url(client, student, student2):
         f"{API}/requests/{request_id}/attachments/{attachment_id}/url", headers=auth(student)
     )
     assert url.status_code == 200
-    assert url.json()["url"].startswith("/storage/requests/")
+    signed = url.json()["url"]
+    assert signed.startswith("http://test/storage/requests/")
+    download = await client.get(signed)
+    assert download.status_code == 200
+    assert download.content == PNG
     other = await client.get(
         f"{API}/requests/{request_id}/attachments/{attachment_id}/url", headers=auth(student2)
     )
