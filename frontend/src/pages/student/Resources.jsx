@@ -22,9 +22,9 @@ export default function Resources() {
 
   return (
     <>
-      <PageHeader icon="fa-calendar-plus" title="Reserve Campus Resources" subtitle="Select study rooms or checkout multimedia equipment quickly without clutter.">
+      <PageHeader icon="fa-calendar-plus" title="จองทรัพยากร" subtitle="เลือกห้องเรียนหรืออุปกรณ์ที่ต้องการใช้งาน">
         <Link to="/student/bookings" className="button secondary-button">
-          <i className="fa-solid fa-clock-rotate-left" /> My Bookings
+          <i className="fa-solid fa-clock-rotate-left" /> ประวัติการจอง
         </Link>
       </PageHeader>
 
@@ -33,11 +33,11 @@ export default function Resources() {
           active={tab}
           onChange={(value) => setParams({ tab: value })}
           tabs={[
-            { value: 'rooms', label: `Rooms (${shownRooms.length})`, icon: 'fa-door-open' },
-            { value: 'equipment', label: `Equipment (${shownEquipment.length})`, icon: 'fa-laptop' },
+            { value: 'rooms', label: `ห้อง (${shownRooms.length})`, icon: 'fa-door-open' },
+            { value: 'equipment', label: `อุปกรณ์ (${shownEquipment.length})`, icon: 'fa-laptop' },
           ]}
         />
-        <SearchBox value={query} onChange={setQuery} placeholder="Search rooms or equipment..." />
+        <SearchBox value={query} onChange={setQuery} placeholder="ค้นหาห้องหรืออุปกรณ์..." />
       </div>
 
       {error && <ErrorState error={error} onRetry={reload} />}
