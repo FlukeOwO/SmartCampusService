@@ -1,0 +1,10 @@
+{
+  "skill": "ux-ui",
+  "test_cases": [
+    {"input": "ปรับ UI ให้สวยขึ้น", "should_trigger": true},
+    {"input": "design the booking page", "should_trigger": true},
+    {"input": "make it look like a learning center", "should_trigger": true},
+    {"input": "fix the database migration", "should_trigger": false},
+    {"input": "deploy to cloud run", "should_trigger": false}
+  ]
+}
