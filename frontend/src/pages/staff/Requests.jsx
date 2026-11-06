@@ -1,4 +1,4 @@
-import { Fragment, useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { listAll } from '../../api/client'
 import { useAuth } from '../../auth/AuthContext'
@@ -12,15 +12,16 @@ import { matches } from '../../lib/search'
 import { useApi } from '../../lib/useApi'
 import { useUserNames } from '../../lib/useUserNames'
 
-const TABS = [
-  { value: 'all', label: 'All' },
-  { value: 'pending', label: 'Pending', icon: 'fa-clock', color: '#fbbf24' },
-  { value: 'in_progress', label: 'In Progress', icon: 'fa-play', color: '#0284c7' },
-  { value: 'completed', label: 'Completed', icon: 'fa-check', color: '#34d399' },
-  { value: 'rejected', label: 'Rejected', icon: 'fa-xmark', color: '#f87171' },
-  { value: 'cancelled', label: 'Cancelled', icon: 'fa-ban', color: '#94a3b8' },
-]
+const PRIORITY_CLASS = {
+  high: 'priority-high',
+  medium: 'priority-medium',
+  low: 'priority-low',
+}
 
+function PriorityBadge({ value }) {
+  const key = (value || '').toLowerCase()
+  return <span className={`priority-badge ${PRIORITY_CLASS[key] || ''}`}>{statusLabel(value) || '—'}</span>
+}
 
 export default function StaffRequests() {
   const { user } = useAuth()
@@ -30,22 +31,40 @@ export default function StaffRequests() {
   const status = params.get('status') || 'all'
   const [query, setQuery] = useState('')
   const [openId, setOpenId] = useState(null)
-  const { data, error, loading, reload } = useApi(
-    () => listAll('/requests', status === 'all' ? {} : { status }),
-    [status],
-  )
+
+  // ดึงทั้งหมดเพื่อคำนวณจำนวนในแท็บ
+  const { data, error, loading, reload } = useApi(() => listAll('/requests', {}), [])
 
   const { run, busyKey } = useAction(reload)
 
-  const rows = (data || []).filter((r) => matches(query, r.title, r.request_number, r.request_type, userName(r.user_id)))
+  const all = data || []
+  const counts = useMemo(() => {
+    const c = { all: all.length, pending: 0, in_progress: 0, completed: 0, rejected: 0, cancelled: 0 }
+    all.forEach((r) => {
+      if (c[r.status] !== undefined) c[r.status] += 1
+    })
+    return c
+  }, [all])
+
+  const TABS = [
+    { value: 'all', label: `ทั้งหมด (${counts.all})` },
+    { value: 'pending', label: `รอดำเนินการ (${counts.pending})`, icon: 'fa-clock' },
+    { value: 'in_progress', label: `กำลังดำเนินการ (${counts.in_progress})`, icon: 'fa-play' },
+    { value: 'completed', label: `เสร็จสิ้น (${counts.completed})`, icon: 'fa-check' },
+    { value: 'rejected', label: `ปฏิเสธ (${counts.rejected})`, icon: 'fa-xmark' },
+    { value: 'cancelled', label: `ยกเลิก (${counts.cancelled})`, icon: 'fa-ban' },
+  ]
+
+  const filtered = all.filter((r) => status === 'all' || r.status === status)
+  const rows = filtered.filter((r) => matches(query, r.title, r.request_number, r.request_type, userName(r.user_id)))
 
   return (
     <>
-      <PageHeader icon="fa-list-check" title="Request Management" subtitle="Review, assign, update, and resolve campus service requests." />
+      <PageHeader icon="fa-list-check" title="จัดการคำร้อง" subtitle="ค้นหา กรอง มอบหมาย และอัปเดตสถานะคำร้องได้ในหน้าเดียว" />
 
       <div className="toolbar-container">
         <TabPills tabs={TABS} active={status} onChange={(value) => setParams(value === 'all' ? {} : { status: value })} />
-        <SearchBox value={query} onChange={setQuery} placeholder="Search requests..." />
+        <SearchBox value={query} onChange={setQuery} placeholder="ค้นหาเลขคำร้อง, หัวข้อ, ผู้แจ้ง..." />
       </div>
 
       {error && <ErrorState error={error} onRetry={reload} />}
@@ -56,12 +75,13 @@ export default function StaffRequests() {
           <table>
             <thead>
               <tr>
-                <th style={{ width: 150 }}>Number</th>
-                <th>Requester</th>
-                <th>Title</th>
-                <th>Priority</th>
-                <th>Status</th>
-                <th style={{ width: 210 }}>Quick Actions</th>
+                <th style={{ width: 130 }}>เลขคำร้อง</th>
+                <th style={{ width: 140 }}>ผู้แจ้ง</th>
+                <th>หัวข้อ</th>
+                <th style={{ width: 100 }}>ความสำคัญ</th>
+                <th style={{ width: 130 }}>ผู้รับผิดชอบ</th>
+                <th style={{ width: 120 }}>สถานะ</th>
+                <th style={{ width: 160 }}>จัดการ</th>
               </tr>
             </thead>
             <tbody>
@@ -69,8 +89,8 @@ export default function StaffRequests() {
                 <Fragment key={item.id}>
                   <tr>
                     <td>
-                      <strong>{item.request_number}</strong>
-                      <div className="muted" style={{ fontSize: '0.78rem' }}>
+                      <strong style={{ whiteSpace: 'nowrap' }}>{item.request_number}</strong>
+                      <div className="muted" style={{ fontSize: '0.75rem' }}>
                         {formatDateTime(item.created_at)}
                       </div>
                     </td>
@@ -84,12 +104,16 @@ export default function StaffRequests() {
                       >
                         <i className={`fa-solid fa-chevron-${openId === item.id ? 'up' : 'down'}`} /> {item.title}
                       </button>
-                      <div className="muted" style={{ fontSize: '0.8rem' }}>
+                      <div className="muted" style={{ fontSize: '0.78rem' }}>
                         {statusLabel(item.request_type)}
-                        {item.assigned_staff_id ? ` · assigned to ${userName(item.assigned_staff_id)}` : ' · unassigned'}
                       </div>
                     </td>
-                    <td>{item.priority}</td>
+                    <td>
+                      <PriorityBadge value={item.priority} />
+                    </td>
+                    <td style={{ fontSize: '0.85rem' }}>
+                      {item.assigned_staff_id ? userName(item.assigned_staff_id) : <span className="muted">ยังไม่มอบหมาย</span>}
+                    </td>
                     <td>
                       <StatusBadge status={item.status} />
                     </td>
@@ -112,7 +136,7 @@ export default function StaffRequests() {
                             aria-disabled={busyKey !== null || undefined}
                             onClick={() => run(`${item.id}:assign`, () => assignRequest(item.id, user.id), `${item.request_number} assigned to you`)}
                           >
-                            Assign to me
+                            รับงาน
                           </button>
                         )}
                       </div>
@@ -120,7 +144,7 @@ export default function StaffRequests() {
                   </tr>
                   {openId === item.id && (
                     <tr className="detail-row">
-                      <td colSpan={6}>
+                      <td colSpan={7}>
                         <RequestDetail requestId={item.id} isOwner={false} />
                       </td>
                     </tr>
@@ -129,8 +153,8 @@ export default function StaffRequests() {
               ))}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={6}>
-                    <EmptyState icon="fa-solid fa-inbox" title="No Requests Found" text="No service tickets match the selected filter." />
+                  <td colSpan={7}>
+                    <EmptyState icon="fa-solid fa-inbox" title="ไม่พบคำร้อง" text="ไม่มีรายการที่ตรงกับตัวกรองที่เลือก" />
                   </td>
                 </tr>
               )}
