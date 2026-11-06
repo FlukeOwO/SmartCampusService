@@ -24,16 +24,28 @@
   box-shadow: 0 2px 8px rgba(227, 82, 5, 0.35);
 }
 
-button,
-.button {
-  background: var(--gradient-primary);
-  box-shadow: var(--shadow-btn);
+/* Primary button: orange bg + white text */
+.button:not(.secondary-button):not(.danger-button):not(.success-button) {
+  background: #E9631A;
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(233, 99, 26, 0.25);
 }
 
-button:hover,
-.button:hover {
-  background: linear-gradient(135deg, #e35205 0%, #c44504 100%);
-  box-shadow: 0 6px 16px rgba(227, 82, 5, 0.35);
+.button:not(.secondary-button):not(.danger-button):not(.success-button):hover {
+  background: #C44E10;
+  color: #ffffff;
+}
+
+/* Secondary button: white bg + dark text */
+.secondary-button {
+  background: #ffffff !important;
+  color: #44403C !important;
+  border: 1px solid #E7E5E4 !important;
+}
+
+.secondary-button:hover {
+  background: #F7F4EF !important;
+  color: #E9631A !important;
 }
 
 input:focus,
