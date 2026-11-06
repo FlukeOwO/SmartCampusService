@@ -93,12 +93,10 @@ export default function StaffDashboard() {
           <div className="card">
             <div className="card-title-row">
               <h2 className="section-title">คำร้องรออนุมัติ</h2>
-              <Link to="/staff/requests?status=pending" style={{ fontSize: '0.82rem' }}>
-                ดูทั้งหมด
-              </Link>
+              <span className="count-tag">{data.requests.items.length} รายการ</span>
             </div>
             {data.requests.items.length === 0 ? (
-              <EmptyState compact text="ไม่มีคำร้องรอ" />
+              <EmptyState compact icon="fa-solid fa-circle-check" title="ไม่มีคำร้องรอ" text="ไม่มีรายการที่ต้องดำเนินการในขณะนี้" />
             ) : (
               <div className="stack">
                 {data.requests.items.map((req) => (
@@ -132,12 +130,10 @@ export default function StaffDashboard() {
           <div className="card">
             <div className="card-title-row">
               <h2 className="section-title">การจองรออนุมัติ</h2>
-              <Link to="/staff/bookings?status=pending" style={{ fontSize: '0.82rem' }}>
-                ดูทั้งหมด
-              </Link>
+              <span className="count-tag">{data.bookings.items.length} รายการ</span>
             </div>
             {data.bookings.items.length === 0 ? (
-              <EmptyState compact text="ไม่มีการจองรอ" />
+              <EmptyState compact icon="fa-solid fa-circle-check" title="ไม่มีการจองรอ" text="ไม่มีรายการที่ต้องอนุมัติในขณะนี้" />
             ) : (
               <div className="stack">
                 {data.bookings.items.map((b) => (
