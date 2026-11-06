@@ -10,7 +10,6 @@ import { REQUEST_ACTION, REQUEST_NEXT, assignRequest, updateRequestStatus } from
 import { useAction } from '../../lib/useAction'
 import { matches } from '../../lib/search'
 import { useApi } from '../../lib/useApi'
-import { useUserNames } from '../../lib/useUserNames'
 
 const TABS = [
   { value: 'all', label: 'All' },
@@ -25,7 +24,6 @@ const TABS = [
 export default function StaffRequests() {
   const { user } = useAuth()
   const ask = useDialog()
-  const userName = useUserNames()
   const [params, setParams] = useSearchParams()
   const status = params.get('status') || 'all'
   const [query, setQuery] = useState('')
@@ -37,7 +35,7 @@ export default function StaffRequests() {
 
   const { run, busyKey } = useAction(reload)
 
-  const rows = (data || []).filter((r) => matches(query, r.title, r.request_number, r.request_type, userName(r.user_id)))
+  const rows = (data || []).filter((r) => matches(query, r.title, r.request_number, r.request_type, r.requester_name))
 
   return (
     <>
@@ -74,7 +72,7 @@ export default function StaffRequests() {
                         {formatDateTime(item.created_at)}
                       </div>
                     </td>
-                    <td style={{ fontWeight: 600 }}>{userName(item.user_id)}</td>
+                    <td style={{ fontWeight: 600 }}>{item.requester_name || `User #${item.user_id}`}</td>
                     <td>
                       <button
                         type="button"
@@ -86,7 +84,7 @@ export default function StaffRequests() {
                       </button>
                       <div className="muted" style={{ fontSize: '0.8rem' }}>
                         {statusLabel(item.request_type)}
-                        {item.assigned_staff_id ? ` · assigned to ${userName(item.assigned_staff_id)}` : ' · unassigned'}
+                        {item.assigned_staff_id ? ` · assigned to ${item.assigned_staff_name || `staff #${item.assigned_staff_id}`}` : ' · unassigned'}
                       </div>
                     </td>
                     <td>{item.priority}</td>

@@ -68,13 +68,24 @@ def notify_request_created(db: AsyncSession, request: Request) -> None:
     )
 
 
+# ข้อความแจ้งเตือนเป็นภาษาไทย จึงแปลงสถานะเป็นคำไทยแทนค่า enum ดิบอย่าง in_progress
+REQUEST_STATUS_TH = {
+    "pending": "รอดำเนินการ",
+    "in_progress": "กำลังดำเนินการ",
+    "completed": "เสร็จสิ้น",
+    "rejected": "ถูกปฏิเสธ",
+    "cancelled": "ยกเลิกแล้ว",
+}
+
+
 def notify_request_status(db: AsyncSession, request: Request) -> None:
+    status = getattr(request.status, "value", request.status)
     _add(
         db,
         request.user_id,
         NotificationType.REQUEST_UPDATE,
         "สถานะคำร้องเปลี่ยน",
-        f"คำร้อง {request.request_number} เปลี่ยนสถานะเป็น {request.status}",
+        f"คำร้อง {request.request_number} เปลี่ยนสถานะเป็น{REQUEST_STATUS_TH.get(status, status)}",
         "request",
         request.id,
     )

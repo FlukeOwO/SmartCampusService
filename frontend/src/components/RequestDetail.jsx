@@ -73,7 +73,7 @@ export default function RequestDetail({ requestId, isOwner, onChanged }) {
         )}
         <div>
           <div className="muted">Assigned staff</div>
-          {req.assigned_staff_id ? 'Assigned to a staff member' : 'Not assigned yet'}
+          {req.assigned_staff_id ? req.assigned_staff_name || 'A staff member' : 'Not assigned yet'}
         </div>
         {req.status_notes && (
           <div>

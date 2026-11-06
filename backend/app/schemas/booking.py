@@ -51,6 +51,7 @@ class BookingResponse(BookingBase):
 
     id: int
     user_id: int
+    user_name: str | None = None
     room_id: int | None = None
     equipment_id: int | None = None
     start_time: datetime

@@ -50,9 +50,13 @@ Base URL: `/api/v1` · Swagger: `/api/v1/docs` (ปิดใน production) · A
 | POST | `/requests/{id}/attachments` | เจ้าของ | `files[]` |
 | GET | `/requests/{id}/attachments/{aid}/url` | เจ้าของ / staff | `{url, expires_in_seconds}` — Signed URL อายุ 15 นาที |
 
+รายการและรายละเอียดคำร้องมี `requester_name` และ `assigned_staff_name` (ชื่อเต็ม) ให้หน้าเว็บแสดงชื่อคนได้โดยไม่ต้องเรียก API รายชื่อผู้ใช้ (ซึ่งเปิดให้เฉพาะ admin)
+
 ไฟล์ที่รับ: `.jpg .jpeg .png .gif .webp .pdf .docx .xlsx` ≤ 10 MB และเนื้อไฟล์ต้องตรงกับนามสกุล (ตรวจ magic bytes)
 
 ## Bookings — `/bookings`
+
+รายการและรายละเอียดการจองมี `user_name` (ชื่อผู้จอง)
 
 | Method | Path | ใคร | หมายเหตุ |
 |---|---|---|---|

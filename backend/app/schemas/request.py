@@ -70,7 +70,9 @@ class RequestResponse(RequestBase):
     id: int
     request_number: str
     user_id: int
+    requester_name: str | None = None
     assigned_staff_id: int | None = None
+    assigned_staff_name: str | None = None
     status: RequestStatus
     status_notes: str | None = None
     resolution: str | None = None
@@ -95,7 +97,9 @@ class RequestListItem(BaseModel):
     priority: RequestPriority
     status: RequestStatus
     user_id: int
+    requester_name: str | None = None
     assigned_staff_id: int | None = None
+    assigned_staff_name: str | None = None
     created_at: datetime
     updated_at: datetime
 
