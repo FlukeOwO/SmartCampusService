@@ -180,3 +180,25 @@ export function ActionButton({ icon, className, label, busy, disabled, onClick }
     </button>
   )
 }
+
+/** Drawer ด้านขวา สำหรับดูรายละเอียดโดยไม่เปลี่ยนหน้า */
+export function Drawer({ title, onClose, children, wide = false }) {
+  return (
+    <div className="drawer-overlay" onClick={onClose}>
+      <div
+        className={`drawer-panel ${wide ? 'drawer-wide' : ''}`}
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+      >
+        <div className="drawer-header">
+          <h2 style={{ margin: 0, fontSize: '1.05rem' }}>{title}</h2>
+          <button type="button" className="btn-dismiss" onClick={onClose} aria-label="ปิด">
+            <i className="fa-solid fa-xmark" />
+          </button>
+        </div>
+        <div className="drawer-body">{children}</div>
+      </div>
+    </div>
+  )
+}
