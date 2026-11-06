@@ -4,21 +4,21 @@
 
 
 :root {
-    --bg-page: #fafaf9;
-    --bg-surface: #ffffff;
-    --bg-subtle: #f5f5f4;
-    --bg-hover: #e2e8f0;
+    --bg-page: #F7F4EF;
+    --bg-surface: #FFFFFF;
+    --bg-subtle: #F0EBE3;
+    --bg-hover: #E7E5E4;
     
     /* KMITL Main Orange #E35205 */
-    --primary: #e35205;
-    --primary-hover: #c44504;
-    --primary-dark: #9a3603;
-    --primary-light: #fff4ed;
-    --primary-border: #fdba74;
+    --primary: #E9631A;
+    --primary-hover: #C44E10;
+    --primary-dark: #9A3D0C;
+    --primary-light: #FFF1E6;
+    --primary-border: #FDBA74;
     
-    --gradient-primary: linear-gradient(135deg, #c44504 0%, #e35205 100%);
-    --gradient-nav: linear-gradient(90deg, #1c1917 0%, #292524 100%);
-    --gradient-card-top: linear-gradient(90deg, #e35205 0%, #fb923c 100%);
+    --gradient-primary: linear-gradient(135deg, #C44E10 0%, #E9631A 100%);
+    --gradient-nav: linear-gradient(135deg, #7c2d12 0%, #9a3603 50%, #e35205 100%);
+    --gradient-card-top: linear-gradient(90deg, #e35205 0%, #f97316 100%);
     
     /* Vibrant Accents */
     --accent-cyan: #06b6d4;
@@ -28,18 +28,18 @@
     --accent-purple: #8b5cf6;
     
     /* Typography colors */
-    --text-heading: #0f172a;
-    --text-body: #334155;
-    --text-muted: #64748b;
+    --text-heading: #1C1917;
+    --text-body: #44403C;
+    --text-muted: #78716C;
     
     /* Borders & Shadows */
-    --border-card: #e7e5e4;
-    --border-light: #f1f5f9;
+    --border-card: #E7E5E4;
+    --border-light: #F5F5F4;
     
     --shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.05);
-    --shadow-card: 0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.06);
-    --shadow-hover: 0 8px 24px -4px rgba(227, 82, 5, 0.12), 0 2px 6px -2px rgba(0,0,0,0.04);
-    --shadow-btn: 0 4px 12px rgba(227, 82, 5, 0.25);
+    --shadow-card: 0 4px 14px -2px rgba(15, 23, 42, 0.06), 0 2px 6px -2px rgba(15, 23, 42, 0.03);
+    --shadow-hover: 0 10px 24px -4px rgba(233, 99, 26, 0.14), 0 4px 8px -2px rgba(15, 23, 42, 0.04);
+    --shadow-btn: 0 4px 12px rgba(233, 99, 26, 0.25);
     
     --radius-sm: 8px;
     --radius-md: 12px;
@@ -65,7 +65,7 @@ body {
     font-family: 'Plus Jakarta Sans', 'Prompt', -apple-system, BlinkMacSystemFont, sans-serif;
     background-color: var(--bg-page);
     background-image: 
-        radial-gradient(circle at 10% 0%, rgba(227, 82, 5, 0.04) 0%, transparent 35%),
+        radial-gradient(circle at 10% 0%, rgba(233, 99, 26, 0.04) 0%, transparent 35%),
         radial-gradient(circle at 90% 100%, rgba(6, 182, 212, 0.04) 0%, transparent 35%);
     background-attachment: fixed;
     color: var(--text-body);
@@ -243,11 +243,11 @@ a:hover {
     display: flex;
     justify-content: space-between;
     align-items: flex-end;
-    margin-bottom: 1.5rem;
+    margin-bottom: 1.25rem;
     flex-wrap: wrap;
     gap: 0.75rem;
-    padding-bottom: 1rem;
     border-bottom: 1px solid var(--border-card);
+    padding-bottom: 0.85rem;
 }
 
 .page-subtitle {
@@ -299,7 +299,7 @@ a:hover {
 .tab-pill.active {
     background: var(--primary);
     color: #ffffff;
-    box-shadow: 0 2px 8px rgba(227, 82, 5, 0.35);
+    box-shadow: 0 2px 8px rgba(233, 99, 26, 0.35);
 }
 
 .search-box {
@@ -357,7 +357,7 @@ a:hover {
 }
 
 .card:hover {
-    transform: translateY(-1px);
+    transform: translateY(-2px);
     box-shadow: var(--shadow-hover);
     border-color: var(--primary-border);
 }
@@ -383,11 +383,10 @@ a:hover {
 }
 
 .number {
-    font-size: 2rem;
-    font-weight: 700;
+    font-size: 1.9rem;
+    font-weight: 800;
     color: var(--text-heading);
     line-height: 1.1;
-    letter-spacing: -0.02em;
 }
 
 .stat-icon {
@@ -430,7 +429,7 @@ a:hover {
 }
 
 .resource-card:hover {
-    transform: translateY(-1px);
+    transform: translateY(-2px);
     box-shadow: var(--shadow-hover);
     border-color: var(--primary-border);
 }
@@ -517,7 +516,7 @@ input:focus,
 textarea:focus,
 select:focus {
     border-color: var(--primary);
-    box-shadow: 0 0 0 3px rgba(227, 82, 5, 0.15);
+    box-shadow: 0 0 0 3px rgba(233, 99, 26, 0.15);
 }
 
 input::placeholder,
@@ -574,7 +573,7 @@ button,
 button:hover,
 .button:hover {
     background: linear-gradient(135deg, #e35205 0%, #c44504 100%);
-    box-shadow: 0 6px 16px rgba(227, 82, 5, 0.35);
+    box-shadow: 0 6px 16px rgba(233, 99, 26, 0.35);
     color: #ffffff;
     transform: translateY(-1px);
 }
