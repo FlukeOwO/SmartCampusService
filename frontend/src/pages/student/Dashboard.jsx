@@ -33,18 +33,18 @@ export default function StudentDashboard() {
   return (
     <>
       <PageHeader
-        title="Student Dashboard"
+        title="หน้าหลัก"
         subtitle={
           <>
-            Welcome back, <strong>{user.full_name}</strong>. Here is your campus activity overview.
+            สวัสดี <strong>{user.full_name}</strong> — ดูคำร้อง การจอง และแจ้งเตือนของคุณ
           </>
         }
       >
         <Link to="/student/requests/new" className="button">
-          <i className="fa-solid fa-plus" /> New Request
+          <i className="fa-solid fa-plus" /> ส่งคำร้องใหม่
         </Link>
         <Link to="/student/resources" className="button secondary-button">
-          Book Resource
+          จองห้อง/อุปกรณ์
         </Link>
       </PageHeader>
 
@@ -52,40 +52,40 @@ export default function StudentDashboard() {
 
       <div className="grid">
         <StatCard
-          title="My Requests"
+          title="คำร้องของฉัน"
           value={data?.requests.total}
           icon="fa-bullhorn"
           colors={{ background: '#eff6ff', color: '#2563eb', borderColor: '#bfdbfe' }}
         >
           <Link to="/student/requests" className="button button-sm secondary-button" style={{ width: '100%' }}>
-            View All Requests <i className="fa-solid fa-arrow-right" style={{ fontSize: '0.75rem' }} />
+            ดูทั้งหมด <i className="fa-solid fa-arrow-right" style={{ fontSize: '0.75rem' }} />
           </Link>
         </StatCard>
 
         <StatCard
-          title="My Bookings"
+          title="การจองของฉัน"
           value={data?.bookings.total}
           icon="fa-calendar-check"
           colors={{ background: '#ecfeff', color: '#0891b2', borderColor: '#a5f3fc' }}
         >
           <Link to="/student/bookings" className="button button-sm secondary-button" style={{ width: '100%' }}>
-            View Booking History <i className="fa-solid fa-arrow-right" style={{ fontSize: '0.75rem' }} />
+            ประวัติการจอง <i className="fa-solid fa-arrow-right" style={{ fontSize: '0.75rem' }} />
           </Link>
         </StatCard>
 
         <StatCard
-          title="Quick Booking"
+          title="จองด่วน"
           value={null}
-          note={<div className="muted" style={{ fontSize: '0.85rem', marginTop: '0.2rem' }}>Reserve rooms &amp; equipment</div>}
+          note={<div className="muted" style={{ fontSize: '0.85rem', marginTop: '0.2rem' }}>ห้องและอุปกรณ์</div>}
           icon="fa-cubes-stacked"
           colors={{ background: '#f5f3ff', color: '#7c3aed', borderColor: '#ddd6fe' }}
         >
           <div style={{ display: 'flex', gap: '0.4rem' }}>
             <Link to="/student/resources?tab=rooms" className="button button-sm" style={{ flex: 1 }}>
-              Rooms
+              ห้อง
             </Link>
             <Link to="/student/resources?tab=equipment" className="button button-sm secondary-button" style={{ flex: 1 }}>
-              Equipment
+              อุปกรณ์
             </Link>
           </div>
         </StatCard>
@@ -94,14 +94,14 @@ export default function StudentDashboard() {
       <div className="grid grid-2">
         <div className="card">
           <div className="card-title-row">
-            <h2 className="section-title">Recent Activity</h2>
+            <h2 className="section-title">กิจกรรมล่าสุด</h2>
             <Link to="/student/requests" style={{ fontSize: '0.82rem' }}>
-              View all
+              ดูทั้งหมด
             </Link>
           </div>
           {loading && <Loading />}
           {data && data.requests.items.length + data.bookings.items.length === 0 && (
-            <EmptyState compact text="No recent requests or bookings." />
+            <EmptyState compact text="ยังไม่มีคำร้องหรือการจอง" />
           )}
           {data && (
             <div className="stack">
@@ -130,7 +130,7 @@ export default function StudentDashboard() {
         <div className="card">
           <div className="card-title-row">
             <h2 className="section-title" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-              Notifications
+              แจ้งเตือน
               {data?.notifications.total > 0 && (
                 <span className="count-tag">
                   {data.notifications.total}
@@ -143,11 +143,11 @@ export default function StudentDashboard() {
                 className="button button-sm secondary-button"
                 onClick={() => markRead('/notifications/read/all', 'POST')}
               >
-                Mark All Read
+                อ่านทั้งหมด
               </button>
             )}
           </div>
-          {data && data.notifications.items.length === 0 && <EmptyState compact text="No unread notifications." />}
+          {data && data.notifications.items.length === 0 && <EmptyState compact text="ไม่มีแจ้งเตือนใหม่" />}
           {data && data.notifications.items.length > 0 && (
             <ul className="notification-list">
               {data.notifications.items.map((n) => (
@@ -160,8 +160,8 @@ export default function StudentDashboard() {
                     <button
                       type="button"
                       className="btn-dismiss"
-                      title="Mark as read"
-                      aria-label="Mark as read"
+                      title="อ่านแล้ว"
+                      aria-label="อ่านแล้ว"
                       onClick={() => markRead(`/notifications/${n.id}/read`, 'PATCH')}
                     >
                       <i className="fa-solid fa-check" />
