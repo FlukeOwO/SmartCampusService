@@ -5,19 +5,19 @@ import { useAuth } from '../auth/AuthContext'
 import { FlashMessages, useClearFlash } from './Flash'
 
 const STUDENT_LINKS = [
-  { to: '/student', icon: 'fa-gauge-high', label: 'Dashboard', end: true },
-  { to: '/student/requests', icon: 'fa-bullhorn', label: 'Requests' },
-  { to: '/student/resources', icon: 'fa-calendar-plus', label: 'Book Resources' },
-  { to: '/student/bookings', icon: 'fa-clock-rotate-left', label: 'My Bookings' },
+  { to: '/student', icon: 'fa-house', label: 'หน้าหลัก', end: true },
+  { to: '/student/requests', icon: 'fa-bullhorn', label: 'คำร้อง' },
+  { to: '/student/resources', icon: 'fa-calendar-plus', label: 'จองห้อง/อุปกรณ์' },
+  { to: '/student/bookings', icon: 'fa-clock-rotate-left', label: 'การจองของฉัน' },
 ]
 
 const STAFF_LINKS = [
-  { to: '/staff', icon: 'fa-chart-pie', label: 'Dashboard', end: true },
-  { to: '/staff/requests', icon: 'fa-list-check', label: 'Requests' },
-  { to: '/staff/bookings', icon: 'fa-calendar-days', label: 'Bookings' },
-  { to: '/staff/rooms', icon: 'fa-door-closed', label: 'Rooms' },
-  { to: '/staff/equipment', icon: 'fa-boxes-stacked', label: 'Equipment' },
-  { to: '/staff/users', icon: 'fa-users-gear', label: 'Users', adminOnly: true },
+  { to: '/staff', icon: 'fa-clipboard-list', label: 'งานที่ต้องทำ', end: true },
+  { to: '/staff/requests', icon: 'fa-list-check', label: 'คำร้อง' },
+  { to: '/staff/bookings', icon: 'fa-calendar-days', label: 'การจอง' },
+  { to: '/staff/rooms', icon: 'fa-door-closed', label: 'ห้อง' },
+  { to: '/staff/equipment', icon: 'fa-boxes-stacked', label: 'อุปกรณ์' },
+  { to: '/staff/users', icon: 'fa-users-gear', label: 'ผู้ใช้', adminOnly: true },
 ]
 
 const ROLE_LABEL = { student: 'Student', staff: 'Staff', admin: 'Admin' }
@@ -54,7 +54,6 @@ export default function Layout() {
   const links = (isStaff ? STAFF_LINKS : STUDENT_LINKS).filter((l) => !l.adminOnly || isAdmin)
 
   const onLogout = () => {
-    // ไม่ให้ข้อความของผู้ใช้คนก่อนค้างอยู่หลังเปลี่ยนบัญชี
     clearFlash()
     logout()
     navigate('/login')
@@ -84,13 +83,13 @@ export default function Layout() {
               </NavLink>
             ))}
 
-            <NavLink to="/notifications" className="nav-bell" aria-label={`Notifications (${unread} unread)`}>
+            <NavLink to="/notifications" className="nav-bell" aria-label={`แจ้งเตือน (${unread} ยังไม่อ่าน)`}>
               <i className="fa-solid fa-bell" />
               {unread > 0 && <span className="bell-count">{unread > 99 ? '99+' : unread}</span>}
             </NavLink>
 
             <a href="#/login" className="logout-btn" onClick={(e) => (e.preventDefault(), onLogout())}>
-              <i className="fa-solid fa-right-from-bracket" /> Logout
+              <i className="fa-solid fa-right-from-bracket" /> ออกจากระบบ
             </a>
           </div>
         )}
