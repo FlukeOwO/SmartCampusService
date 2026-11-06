@@ -409,3 +409,80 @@ button[aria-disabled='true'],
   transform: none;
   box-shadow: none;
 }
+
+/* ==========================================================================
+   Hour-slot booking grid
+   ========================================================================== */
+.booking-target {
+  background: #f8fafc;
+  padding: 0.85rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-card);
+  margin-bottom: 1.25rem;
+}
+.hour-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: 0.45rem;
+  margin-top: 0.4rem;
+}
+.hour-slot {
+  padding: 0.55rem 0.3rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-card);
+  background: #ffffff;
+  color: var(--text-heading);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition);
+  box-shadow: none;
+  transform: none;
+}
+.hour-slot:hover:not(:disabled) {
+  border-color: var(--primary);
+  background: var(--primary-light);
+  color: var(--primary);
+  box-shadow: none;
+  transform: none;
+}
+.hour-slot.selected {
+  background: var(--primary);
+  color: #ffffff;
+  border-color: var(--primary);
+}
+.hour-slot.busy,
+.hour-slot:disabled.busy {
+  background: #e2e8f0;
+  color: #94a3b8;
+  border-color: #cbd5e1;
+  cursor: not-allowed;
+  text-decoration: line-through;
+}
+.hour-slot.past:not(.selected) {
+  background: #f8fafc;
+  color: #cbd5e1;
+  cursor: not-allowed;
+}
+
+/* ==========================================================================
+   Notifications readability
+   ========================================================================== */
+.notification-item {
+  align-items: flex-start;
+  padding: 0.9rem 1rem;
+}
+.notification-msg {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+  line-height: 1.45;
+}
+.notification-msg strong {
+  font-size: 0.92rem;
+}
+.notification-actions {
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
