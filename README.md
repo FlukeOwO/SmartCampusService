@@ -28,6 +28,7 @@ Backend เป็น FastAPI + PostgreSQL ที่ deploy บน Google Cloud R
 | **คำร้อง/แจ้งปัญหา** | แนบไฟล์ได้ มอบหมายงาน เปลี่ยนสถานะ และให้คะแนนหลังเสร็จ |
 | **ห้องและอุปกรณ์** | staff เพิ่ม แก้ ลบ ข้อมูลห้องและอุปกรณ์ |
 | **การแจ้งเตือน** | แจ้งผู้ใช้ในระบบเมื่อสถานะคำร้องหรือการจองเปลี่ยน |
+| **Dashboard** | staff/admin ดูสถิติคำร้อง การจอง ห้องยอดนิยม และจำนวนต่อวัน |
 | **ไฟล์แนบ** | เก็บในโฟลเดอร์บนเครื่อง (dev) หรือ Cloud Storage แบบ private (cloud) |
 
 ## เริ่มใช้งานบนเครื่องตัวเอง
@@ -141,10 +142,12 @@ SmartCampusService/
 │   │       └── notifications/
 │   ├── alembic/           # migration
 │   ├── tests/             # pytest (ต้องใช้ PostgreSQL)
+│   ├── scripts/           # demo_race.py, loadtest.py สำหรับสาธิต
 │   └── Dockerfile         # target: development, production
 ├── frontend/              # React + Vite
-├── infra/gcp/setup.sh     # ตั้งค่า GCP ครั้งแรก
-├── .github/workflows/     # backend-ci.yml, backend-cd.yml
+├── infra/gcp/             # setup.sh (ติดตั้งครั้งแรก), ops.sh (HA, rollback, canary), monitoring/
+├── docs/                  # CLOUD_DESIGN.md + แผนภาพสถาปัตยกรรม (diagram as code)
+├── .github/workflows/     # backend-ci, backend-cd, frontend-cd
 ├── docker-compose.yml     # สภาพแวดล้อมสำหรับพัฒนา
 └── .env.example           # ตัวอย่างค่า environment
 ```
@@ -210,5 +213,6 @@ docker compose exec backend alembic current
 
 ## เอกสารอื่น
 
+- [Cloud design](docs/CLOUD_DESIGN.md) เหตุผลการเลือกบริการ แผนภาพ สคริปต์สาธิต และเตรียมถาม–ตอบ
 - [API reference](backend/API.md) รายการ endpoint สิทธิ์ และรูปแบบ error
 - [Deployment guide](DEPLOYMENT.md) ตั้งค่าและ deploy บน Google Cloud

@@ -5,10 +5,15 @@
 # รันใน Cloud Shell โดยคนที่เป็น Owner ของ project:
 #   export PROJECT_ID=smart-campus-prod
 #   ./setup.sh shared                 # VPC, PSA, Cloud SQL, Artifact Registry, WIF, deployer SA
-#   ./setup.sh env prod https://<frontend-domain>
-#   ./setup.sh env dev  https://<frontend-dev-domain>
+#   ./setup.sh env dev                # API + DB + buckets ของ dev
+#   ./setup.sh env prod
 #   ./setup.sh seed prod admin@your-university.ac.th   # สร้างบัญชี admin คนแรก (ครั้งเดียว)
+#   ./setup.sh dashboard prod         # Cloud Monitoring dashboard (Observability)
 #   ./setup.sh budget <BILLING_ACCOUNT_ID>
+#
+# Frontend โฮสต์บน bucket สาธารณะ จึงเปิดที่ https://storage.googleapis.com/<bucket>/index.html
+# ถ้าใช้โดเมนอื่น ส่งเป็นอาร์กิวเมนต์ที่ 3: ./setup.sh env prod https://campus.example.com
+# งานหลังติดตั้ง (เปิด HA, หยุด DB, canary, rollback, ลบ project) อยู่ใน ./ops.sh
 #
 # รันซ้ำได้: resource ที่มีอยู่แล้วจะถูกข้าม
 # =============================================================================
@@ -38,7 +43,8 @@ shared() {
   gcloud services enable run.googleapis.com sqladmin.googleapis.com compute.googleapis.com \
     servicenetworking.googleapis.com artifactregistry.googleapis.com \
     secretmanager.googleapis.com iam.googleapis.com iamcredentials.googleapis.com \
-    sts.googleapis.com storage.googleapis.com
+    sts.googleapis.com storage.googleapis.com monitoring.googleapis.com \
+    logging.googleapis.com cloudtrace.googleapis.com billingbudgets.googleapis.com
 
   log "2) VPC + subnet for Direct VPC Egress"
   exists gcloud compute networks describe "$VPC" ||
@@ -127,12 +133,13 @@ env_names() {
   API_SA_NAME="campus-api${SUFFIX}-sa"
   API_SA="${API_SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
   BUCKET="${PROJECT_ID}-campus-uploads${SUFFIX}"
+  WEB_BUCKET="${PROJECT_ID}-campus-web${SUFFIX}"
   SECRET_DB="db-password${SUFFIX}"
   SECRET_JWT="jwt-secret-key${SUFFIX}"
 }
 
 env_setup() {
-  local env=$1 frontend_origin=${2:?frontend origin required, e.g. https://campus.example.com}
+  local env=$1 frontend_origin=${2:-https://storage.googleapis.com}
   env_names "$env"
   local db_host
   db_host=$(gcloud sql instances describe "$SQL_INSTANCE" --format='value(ipAddresses[0].ipAddress)')
@@ -162,6 +169,32 @@ env_setup() {
   exists gcloud storage buckets describe "gs://$BUCKET" ||
     gcloud storage buckets create "gs://$BUCKET" --location="$REGION" \
       --uniform-bucket-level-access --public-access-prevention
+  # Storage tiering: ไฟล์แนบของคำร้องที่ปิดแล้วแทบไม่ถูกเปิดอีก จึงย้ายไป class ที่ถูกกว่า
+  local lifecycle
+  lifecycle=$(mktemp)
+  cat >"$lifecycle" <<'JSON'
+{"rule": [
+  {"action": {"type": "SetStorageClass", "storageClass": "NEARLINE"},
+   "condition": {"age": 30, "matchesStorageClass": ["STANDARD"]}},
+  {"action": {"type": "SetStorageClass", "storageClass": "COLDLINE"},
+   "condition": {"age": 180, "matchesStorageClass": ["NEARLINE"]}}
+]}
+JSON
+  gcloud storage buckets update "gs://$BUCKET" --lifecycle-file="$lifecycle"
+  rm -f "$lifecycle"
+
+  log "[$env] Public web bucket (React static files)"
+  if ! exists gcloud storage buckets describe "gs://$WEB_BUCKET"; then
+    gcloud storage buckets create "gs://$WEB_BUCKET" --location="$REGION" \
+      --uniform-bucket-level-access
+    gcloud storage buckets update "gs://$WEB_BUCKET" \
+      --web-main-page-suffix=index.html --web-error-page=index.html
+  fi
+  gcloud storage buckets add-iam-policy-binding "gs://$WEB_BUCKET" \
+    --member=allUsers --role=roles/storage.objectViewer >/dev/null
+  # GitHub Actions อัปโหลดไฟล์ build ของ frontend ได้เฉพาะ bucket นี้
+  gcloud storage buckets add-iam-policy-binding "gs://$WEB_BUCKET" \
+    --member="serviceAccount:$DEPLOYER_SA" --role=roles/storage.objectAdmin >/dev/null
 
   log "[$env] Runtime service account (least privilege)"
   exists gcloud iam service-accounts describe "$API_SA" ||
@@ -194,7 +227,7 @@ env_setup() {
   envs+="@POSTGRES_USER=$DB_USER@POSTGRES_DB=$DB_NAME@DB_SSL=require@DB_POOL_SIZE=3@DB_MAX_OVERFLOW=2"
   envs+="@STORAGE_PROVIDER=gcs@GCS_BUCKET_NAME=$BUCKET@GCS_PROJECT_ID=$PROJECT_ID"
   envs+="@CORS_ORIGINS=$frontend_origin@ALLOWED_HOSTS=*.run.app"
-  envs+="@LOG_LEVEL=INFO@LOG_FORMAT=json"
+  envs+="@LOG_LEVEL=INFO@LOG_FORMAT=json@GCP_PROJECT_ID=$PROJECT_ID"
   local secrets="POSTGRES_PASSWORD=$SECRET_DB:latest,SECRET_KEY=$SECRET_JWT:latest"
   local net=(--network="$VPC" --subnet="$SUBNET" --vpc-egress=private-ranges-only)
 
@@ -231,9 +264,13 @@ env_setup() {
   echo "ตั้ง startup probe: Console > Cloud Run > $SERVICE > Edit > Health checks > HTTP GET /healthz"
 
   log "[$env] GitHub Environment '$env' variables"
+  local api_url
+  api_url=$(gcloud run services describe "$SERVICE" --region="$REGION" --format='value(status.url)')
   echo "  SERVICE_NAME = $SERVICE"
   echo "  MIGRATE_JOB  = $MIGRATE_JOB"
-  echo "  API URL      = $(gcloud run services describe "$SERVICE" --region="$REGION" --format='value(status.url)')"
+  echo "  WEB_BUCKET   = $WEB_BUCKET"
+  echo "  API_BASE_URL = $api_url/api/v1"
+  echo "  Frontend URL = https://storage.googleapis.com/$WEB_BUCKET/index.html"
 }
 
 seed() {
@@ -255,11 +292,28 @@ seed() {
   echo "เปลี่ยนรหัสผ่าน admin หลัง login ครั้งแรก แล้วลบ secret: gcloud secrets delete $secret"
 }
 
+dashboard() {
+  env_names "${1:?prod|dev}"
+  local name="Smart Campus - $SERVICE"
+  if [ -n "$(gcloud monitoring dashboards list --filter="displayName=\"$name\"" --format='value(name)')" ]; then
+    echo "dashboard '$name' already exists"
+    return
+  fi
+  local file
+  file=$(mktemp)
+  sed -e "s|__SERVICE__|$SERVICE|g" -e "s|__PROJECT__|$PROJECT_ID|g" \
+    -e "s|__SQL_INSTANCE__|$SQL_INSTANCE|g" -e "s|__TITLE__|$name|g" \
+    "$(dirname "$0")/monitoring/dashboard.json" >"$file"
+  gcloud monitoring dashboards create --config-from-file="$file"
+  rm -f "$file"
+  echo "เปิดดูที่ Console > Monitoring > Dashboards > $name"
+}
+
 budget() {
   local billing=${1:?billing account id required}
   gcloud billing budgets create --billing-account="$billing" --display-name="smart-campus-300" \
     --budget-amount=300USD --threshold-rule=percent=0.5 --threshold-rule=percent=0.75 \
-    --threshold-rule=percent=0.9
+    --threshold-rule=percent=0.9 --threshold-rule=percent=1.0,basis=forecasted-spend
   gcloud billing budgets create --billing-account="$billing" --display-name="smart-campus-monthly-20" \
     --budget-amount=20USD --calendar-period=month --threshold-rule=percent=0.9
 }
@@ -268,6 +322,7 @@ case "${1:-}" in
   shared) shared ;;
   env) env_setup "${2:?prod|dev}" "${3:-}" ;;
   seed) env_names "${2:?prod|dev}"; seed "$2" "${3:-}" ;;
+  dashboard) dashboard "${2:-}" ;;
   budget) budget "${2:-}" ;;
-  *) sed -n '2,16p' "$0"; exit 1 ;;
+  *) sed -n '2,22p' "$0"; exit 1 ;;
 esac

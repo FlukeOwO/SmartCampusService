@@ -91,6 +91,8 @@ class Settings(BaseSettings):
     # -------------------------------------------------------------------------
     LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     LOG_FORMAT: Literal["json", "text"] = "text"
+    # ใช้ผูก log กับ request trace ใน Cloud Logging (ว่าง = ใช้ GCS_PROJECT_ID)
+    GCP_PROJECT_ID: str = ""
 
     @property
     def database_url(self) -> str:

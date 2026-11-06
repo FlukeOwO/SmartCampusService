@@ -1,0 +1,97 @@
+# Frontend (React + Vite) -> bucket สาธารณะบน Cloud Storage
+#   PR / push ที่แก้ frontend/** : lint + build (ตรวจว่า build ผ่าน)
+#   push dev  -> GitHub Environment "dev"  -> gs://<WEB_BUCKET> ของ dev
+#   push main -> GitHub Environment "prod" -> gs://<WEB_BUCKET> ของ prod
+# deploy ถูกข้ามจนกว่าจะตั้ง repository variable DEPLOY_ENABLED=true (เหมือน backend-cd)
+#
+# ตัวแปรใน GitHub Environment: WEB_BUCKET, API_BASE_URL (+ GCP_PROJECT_ID, WIF_PROVIDER, DEPLOYER_SA)
+# เว็บเปิดที่ https://storage.googleapis.com/<WEB_BUCKET>/index.html จึง build ด้วย --base=/<bucket>/
+# และ router ฝั่ง React ต้องใช้ HashRouter (bucket ไม่มี rewrite ทุก path ไป index.html)
+name: frontend-cd
+
+on:
+  pull_request:
+    branches: [dev, main]
+    paths: ["frontend/**", ".github/workflows/frontend-cd.yml"]
+  push:
+    branches: [main, dev]
+    paths: ["frontend/**", ".github/workflows/frontend-cd.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: frontend-cd-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+
+  deploy:
+    needs: build
+    if: >-
+      github.event_name != 'pull_request' && vars.DEPLOY_ENABLED == 'true' &&
+      (github.ref_name == 'main' || github.ref_name == 'dev')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: frontend
+    env:
+      WEB_BUCKET: ${{ vars.WEB_BUCKET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+
+      - name: Build for the bucket path
+        env:
+          VITE_API_BASE_URL: ${{ vars.API_BASE_URL }}
+        run: npx vite build --base="/$WEB_BUCKET/"
+
+      - name: Authenticate to Google Cloud (WIF, no JSON key)
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SA }}
+
+      - name: Upload to Cloud Storage
+        run: |
+          # assets มี hash ในชื่อไฟล์ จึง cache ได้นาน; index.html ห้าม cache ผู้ใช้จะได้เวอร์ชันใหม่ทันที
+          gcloud storage rsync dist "gs://$WEB_BUCKET" --recursive \
+            --delete-unmatched-destination-objects \
+            --cache-control="public, max-age=31536000, immutable"
+          gcloud storage objects update "gs://$WEB_BUCKET/index.html" \
+            --cache-control="no-cache, max-age=0"
+
+      - name: Smoke test
+        run: curl -fsS "https://storage.googleapis.com/$WEB_BUCKET/index.html" | grep -q '<div id="root">'
+
+      - name: Summary
+        run: |
+          echo "### Frontend: https://storage.googleapis.com/$WEB_BUCKET/index.html" >> "$GITHUB_STEP_SUMMARY"
