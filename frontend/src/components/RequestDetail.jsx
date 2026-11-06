@@ -111,9 +111,62 @@ export default function RequestDetail({ requestId, isOwner, onChanged }) {
         )}
       </div>
 
+
+      <div>
+        <div className="muted" style={{ fontSize: '0.86rem', marginBottom: '0.4rem' }}>
+          ประวัติการดำเนินงาน
+        </div>
+        <div className="timeline">
+          <div className="timeline-item">
+            <div className="timeline-dot" />
+            <div>
+              <strong>สร้างคำร้อง</strong>
+              <div className="muted" style={{ fontSize: '0.78rem' }}>{formatDateTime(req.created_at)}</div>
+            </div>
+          </div>
+          {req.assigned_at && (
+            <div className="timeline-item">
+              <div className="timeline-dot" />
+              <div>
+                <strong>มอบหมายงาน</strong>
+                <div className="muted" style={{ fontSize: '0.78rem' }}>{formatDateTime(req.assigned_at)}</div>
+              </div>
+            </div>
+          )}
+          {req.started_at && (
+            <div className="timeline-item">
+              <div className="timeline-dot active" />
+              <div>
+                <strong>เริ่มดำเนินการ</strong>
+                <div className="muted" style={{ fontSize: '0.78rem' }}>{formatDateTime(req.started_at)}</div>
+              </div>
+            </div>
+          )}
+          {req.completed_at && (
+            <div className="timeline-item">
+              <div className="timeline-dot done" />
+              <div>
+                <strong>เสร็จสิ้น</strong>
+                <div className="muted" style={{ fontSize: '0.78rem' }}>{formatDateTime(req.completed_at)}</div>
+                {req.resolution && <div style={{ fontSize: '0.85rem', marginTop: 4 }}>{req.resolution}</div>}
+              </div>
+            </div>
+          )}
+          {req.rejection_reason && (
+            <div className="timeline-item">
+              <div className="timeline-dot rejected" />
+              <div>
+                <strong>ปฏิเสธ</strong>
+                <div style={{ fontSize: '0.85rem', marginTop: 4 }}>{req.rejection_reason}</div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
       <div>
         <div className="muted" style={{ fontSize: '0.86rem', marginBottom: '0.3rem' }}>
-          Attachments ({req.attachments.length})
+          ไฟล์แนบ ({req.attachments.length})
         </div>
         {req.attachments.length === 0 ? (
           <span className="muted" style={{ fontSize: '0.85rem' }}>
