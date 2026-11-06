@@ -1,0 +1,139 @@
+/* ==========================================================================
+   ส่วนเสริมของ style.css (ธีมเดิมของทีม) สำหรับสถานะและ component ที่ API ใหม่มีเพิ่ม
+   ========================================================================== */
+
+/* สถานะจาก backend: confirmed/completed = เขียว, maintenance/closed = แดง, in_use = ฟ้า */
+.status-badge.status-confirmed,
+.status-badge.status-completed {
+  background: #dcfce7;
+  color: #15803d;
+  border: 1px solid #bbf7d0;
+}
+.status-badge.status-maintenance,
+.status-badge.status-closed,
+.status-badge.status-broken,
+.status-badge.status-retired {
+  background: #fee2e2;
+  color: #b91c1c;
+  border: 1px solid #fecaca;
+}
+.status-badge.status-in_use {
+  background: #e0f2fe;
+  color: #0369a1;
+  border: 1px solid #bae6fd;
+}
+
+/* layout 2 คอลัมน์ที่ยุบเหลือคอลัมน์เดียวบนมือถือ (เดิมเขียน inline จึงไม่ responsive) */
+.grid-2 {
+  grid-template-columns: 1fr 1fr;
+  align-items: start;
+  margin-top: 1.25rem;
+}
+.grid-3 {
+  grid-template-columns: 1fr 1fr 1fr;
+  margin: 0 0 1rem 0;
+  gap: 1rem;
+}
+@media (max-width: 768px) {
+  .grid-2,
+  .grid-3 {
+    grid-template-columns: 1fr;
+  }
+}
+
+.list-item {
+  padding: 0.65rem 0.85rem;
+  background: var(--bg-subtle);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-card);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+}
+.list-item-title {
+  font-weight: 600;
+  font-size: 0.88rem;
+  color: var(--text-heading);
+}
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.muted {
+  color: var(--text-muted);
+}
+.card-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.85rem;
+}
+
+/* กระดิ่งแจ้งเตือนบน navbar */
+.nav-bell {
+  position: relative;
+}
+.nav-bell .bell-count {
+  position: absolute;
+  top: 0.1rem;
+  right: 0.2rem;
+  min-width: 1.05rem;
+  height: 1.05rem;
+  padding: 0 0.25rem;
+  border-radius: 999px;
+  background: var(--accent-rose);
+  color: #fff;
+  font-size: 0.65rem;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* แถวรายละเอียดคำร้องที่กดขยาย */
+tr.clickable {
+  cursor: pointer;
+}
+tr.detail-row > td {
+  background: var(--bg-subtle);
+}
+.detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem 1.5rem;
+  font-size: 0.86rem;
+}
+@media (max-width: 768px) {
+  .detail-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.attachment-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.busy-slot {
+  font-size: 0.8rem;
+  color: #b91c1c;
+}
+.free-slot {
+  font-size: 0.8rem;
+  color: #15803d;
+}
+
+/* loading spinner */
+.loading-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  padding: 2.5rem 1rem;
+  color: var(--text-muted);
+}
+.button[disabled] {
+  opacity: 0.6;
+  cursor: not-allowed;
+}

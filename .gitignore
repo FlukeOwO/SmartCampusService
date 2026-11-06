@@ -20,6 +20,8 @@ downloads/
 eggs/
 .eggs/
 lib/
+# โค้ด frontend ใช้ชื่อโฟลเดอร์ lib ด้วย ห้ามโดน rule ของ Python ข้างบน
+!frontend/src/lib/
 lib64/
 parts/
 sdist/
