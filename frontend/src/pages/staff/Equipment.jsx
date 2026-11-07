@@ -92,7 +92,7 @@ export default function StaffEquipment() {
 
       <div className="toolbar-container" style={{ marginTop: 0 }}>
         <p style={{ margin: 0, fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-          Total items: <strong>{equipments.length}</strong> (one row = one physical item)
+          อุปกรณ์ทั้งหมด <strong>{equipments.length} ชิ้น</strong> (1 แถวต่ออุปกรณ์ 1 ชิ้น)
         </p>
         <SearchBox value={query} onChange={setQuery} placeholder="Search equipment..." />
       </div>
