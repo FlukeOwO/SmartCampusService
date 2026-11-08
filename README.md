@@ -38,7 +38,7 @@ Backend เป็น FastAPI + PostgreSQL ที่ deploy บน Google Cloud R
 **1. ดึงโค้ดและสร้างไฟล์ `.env`**
 
 ```bash
-git clone https://github.com/FlukeOwO/SmartCampusService.git
+git clone https://github.com/Nolimx/SmartCampusService.git
 cd SmartCampusService
 cp .env.example .env
 ```
