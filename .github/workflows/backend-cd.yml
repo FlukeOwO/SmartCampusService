@@ -27,16 +27,25 @@ jobs:
       postgres:
         image: postgres:15
         env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: campus_test
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
         ports:
           - 5432:5432
         options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+          --health-cmd "pg_isready -U test"
+          --health-interval 5s
+          --health-retries 10
+    env:
+      ENVIRONMENT: test
+      SECRET_KEY: ci-only-secret-key-that-is-at-least-32-chars
+      POSTGRES_SERVER: localhost
+      POSTGRES_USER: test
+      POSTGRES_PASSWORD: test
+      POSTGRES_DB: test
+    defaults:
+      run:
+        working-directory: backend
     steps:
       - uses: actions/checkout@v4
 
@@ -47,15 +56,10 @@ jobs:
           cache-dependency-path: backend/requirements-dev.txt
 
       - name: Install dependencies
-        run: |
-          cd backend
-          pip install -r requirements-dev.txt
+        run: pip install -r requirements-dev.txt
 
       - name: Run migrations and tests
-        env:
-          DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/campus_test
         run: |
-          cd backend
           alembic upgrade head
           pytest -q
 
