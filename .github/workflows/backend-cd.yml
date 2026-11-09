@@ -81,7 +81,7 @@ jobs:
       - name: Smoke test new revision
         run: |
           for i in 1 2 3 4 5; do
-            if curl -fsS --max-time 10 "${{ steps.deploy.outputs.tag_url }}/healthz"; then
+            if curl -fsS --max-time 10 "${{ steps.deploy.outputs.tag_url }}/readyz"; then
               exit 0
             fi
             sleep 5
