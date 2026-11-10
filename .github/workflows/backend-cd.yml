@@ -58,6 +58,11 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
 
+      - name: Lint
+        run: |
+          ruff check .
+          ruff format --check .
+
       - name: Run migrations and tests
         run: |
           alembic upgrade head
@@ -65,7 +70,9 @@ jobs:
 
   deploy:
     needs: test
-    if: vars.DEPLOY_ENABLED == 'true' && (github.ref_name == 'main' || github.ref_name == 'dev')
+    # success() is required: an `if` replaces the default "needs succeeded" check,
+    # so without it a failing test job still deploys.
+    if: ${{ success() && vars.DEPLOY_ENABLED == 'true' && (github.ref_name == 'main' || github.ref_name == 'dev') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
@@ -104,7 +111,11 @@ jobs:
         id: deploy
         run: |
           TAG="sha-${GITHUB_SHA::7}"
-          gcloud run deploy "$SERVICE" --image "$IMAGE" --no-traffic --tag "$TAG" --quiet
+          # concurrency 20 stays near the DB pool (5) so requests are not stuck for the pool timeout.
+          # startup probe is /healthz (no DB) so a slow database does not block the instance from starting.
+          gcloud run deploy "$SERVICE" --image "$IMAGE" --no-traffic --tag "$TAG" --quiet \
+            --concurrency=20 \
+            --startup-probe="httpGet.path=/healthz,initialDelaySeconds=0,timeoutSeconds=4,periodSeconds=5,failureThreshold=12"
           REVISION=$(gcloud run services describe "$SERVICE" --format='value(status.latestCreatedRevisionName)')
           SERVICE_URL=$(gcloud run services describe "$SERVICE" --format='value(status.url)')
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
@@ -112,15 +123,20 @@ jobs:
           echo "tag_url=${SERVICE_URL/https:\/\//https://$TAG---}" >> "$GITHUB_OUTPUT"
           echo "service_url=$SERVICE_URL" >> "$GITHUB_OUTPUT"
 
-      - name: Smoke test new revision
+      - name: Smoke test new revision (/readyz, includes the database)
         run: |
-          for i in 1 2 3 4 5; do
-            if curl -fsS --max-time 10 "${{ steps.deploy.outputs.tag_url }}/readyz"; then
+          url="${{ steps.deploy.outputs.tag_url }}/readyz"
+          for i in 1 2 3 4 5 6 7 8; do
+            code=$(curl -sS -o /tmp/readyz.json -w '%{http_code}' --max-time 15 "$url" || echo 000)
+            if [ "$code" = "200" ] && grep -q '"ready"' /tmp/readyz.json; then
+              cat /tmp/readyz.json
               exit 0
             fi
+            echo "readyz not ready (attempt $i, HTTP $code)"
+            cat /tmp/readyz.json 2>/dev/null || true
             sleep 5
           done
-          echo "::error::Smoke test failed - traffic stays on the previous revision"
+          echo "::error::Smoke test /readyz failed - traffic stays on the previous revision"
           exit 1
 
       - name: Shift traffic to new revision

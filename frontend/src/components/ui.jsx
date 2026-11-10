@@ -1,16 +1,60 @@
-import { useEffect, useRef } from 'react'
+import { Component, useEffect, useRef, useState } from 'react'
 import { statusLabel } from '../lib/format'
 
 export function StatusBadge({ status }) {
   return <span className={`status-badge status-${status}`}>{statusLabel(status)}</span>
 }
 
-export function Loading({ text = 'Loading...' }) {
+export function Loading({ text = 'Loading...', slowText }) {
+  const [slow, setSlow] = useState(false)
+  useEffect(() => {
+    if (!slowText) return undefined
+    const timer = setTimeout(() => setSlow(true), 1500)
+    return () => clearTimeout(timer)
+  }, [slowText])
   return (
-    <div className="loading-state">
-      <i className="fa-solid fa-spinner fa-spin" /> {text}
+    <div className="loading-state" role="status">
+      <i className="fa-solid fa-spinner fa-spin" aria-hidden="true" /> {slow && slowText ? slowText : text}
     </div>
   )
+}
+
+export function ServerUnavailable({ error, onRetry }) {
+  return (
+    <div className="form-card" style={{ maxWidth: 480, margin: '3rem auto' }}>
+      <h1>The server is not ready</h1>
+      <p>{error?.message || 'The request failed. Please try again.'}</p>
+      {onRetry && (
+        <button type="button" className="button" onClick={onRetry}>
+          Try again
+        </button>
+      )}
+    </div>
+  )
+}
+
+/** A render error used to blank the whole page. Show the message and let the user retry. */
+export class RouteErrorBoundary extends Component {
+  constructor(props) {
+    super(props)
+    this.state = { error: null, key: 0 }
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error }
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <ErrorState
+          error={this.state.error}
+          onRetry={() => this.setState((state) => ({ error: null, key: state.key + 1 }))}
+        />
+      )
+    }
+    return <div key={this.state.key}>{this.props.children}</div>
+  }
 }
 
 export function EmptyState({ icon = 'fa-regular fa-clipboard', title, text, compact = false }) {

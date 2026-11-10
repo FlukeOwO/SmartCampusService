@@ -40,10 +40,11 @@ export default function StaffDashboard() {
   const { run, busyKey } = useAction(reload)
 
   const s = data?.summary
-  const pendingRequests = s?.requests.by_status.pending ?? 0
-  const pendingBookings = s?.bookings.pending_approval ?? 0
-  const inProgress = s?.requests.by_status.in_progress ?? 0
-  const completed = s?.requests.by_status.completed ?? 0
+  const byStatus = s?.requests?.by_status ?? {}
+  const pendingRequests = byStatus.pending ?? 0
+  const pendingBookings = s?.bookings?.pending_approval ?? 0
+  const inProgress = byStatus.in_progress ?? 0
+  const completed = byStatus.completed ?? 0
 
   return (
     <>
@@ -61,7 +62,7 @@ export default function StaffDashboard() {
       <div className="grid">
         <StatCard
           title="คำร้อง"
-          value={s?.requests.total}
+          value={s?.requests?.total}
           note={
             <div style={{ fontSize: '0.78rem', marginTop: 4 }}>
               <span style={{ color: '#b45309' }}>{pendingRequests} รอ</span>
@@ -80,12 +81,12 @@ export default function StaffDashboard() {
         </StatCard>
         <StatCard
           title="การจอง"
-          value={s?.bookings.total}
+          value={s?.bookings?.total}
           note={
             <div style={{ fontSize: '0.78rem', marginTop: 4 }}>
               <span style={{ color: '#b45309' }}>{pendingBookings} รออนุมัติ</span>
               {' · '}
-              <span style={{ color: '#15803d' }}>{s?.bookings.upcoming_confirmed ?? 0} กำลังมาถึง</span>
+              <span style={{ color: '#15803d' }}>{s?.bookings?.upcoming_confirmed ?? 0} กำลังมาถึง</span>
             </div>
           }
           icon="fa-calendar-check"
@@ -190,15 +191,15 @@ export default function StaffDashboard() {
 
           <div className="card">
             <h2 className="section-title" style={{ marginBottom: '0.85rem' }}>คำร้องตามสถานะ</h2>
-            <StatusBar byStatus={s.requests.by_status} />
+            <StatusBar byStatus={byStatus} />
             <div className="stack" style={{ marginTop: '0.85rem' }}>
-              {Object.entries(s.requests.by_status).map(([status, count]) => (
+              {Object.entries(byStatus).map(([status, count]) => (
                 <div key={status} className="list-item">
                   <StatusBadge status={status} />
                   <strong>{count}</strong>
                 </div>
               ))}
-              {s.requests.avg_resolution_hours !== null && (
+              {s?.requests?.avg_resolution_hours != null && (
                 <small className="muted">เวลาเฉลี่ยแก้ไขปัญหา: {formatDuration(s.requests.avg_resolution_hours)}</small>
               )}
             </div>
@@ -206,7 +207,7 @@ export default function StaffDashboard() {
 
           <div className="card">
             <h2 className="section-title" style={{ marginBottom: '0.85rem' }}>ห้องยอดนิยม (30 วัน)</h2>
-            {s.top_rooms.length === 0 ? (
+            {(s?.top_rooms ?? []).length === 0 ? (
               <EmptyState compact text="ยังไม่มีการจองห้อง" />
             ) : (
               <div className="stack">

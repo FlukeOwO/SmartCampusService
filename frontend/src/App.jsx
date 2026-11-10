@@ -2,7 +2,7 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import { useAuth } from './auth/AuthContext'
 import { homePathFor } from './auth/roles'
 import Layout from './components/Layout'
-import { Loading } from './components/ui'
+import { Loading, RouteErrorBoundary } from './components/ui'
 import Login from './pages/Login'
 import Notifications from './pages/Notifications'
 import Register from './pages/Register'
@@ -38,6 +38,7 @@ const STAFF = ['staff', 'admin']
 
 export default function App() {
   return (
+    <RouteErrorBoundary>
     <Routes>
       <Route element={<Layout />}>
         <Route path="/" element={<Home />} />
@@ -61,5 +62,6 @@ export default function App() {
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
+    </RouteErrorBoundary>
   )
 }

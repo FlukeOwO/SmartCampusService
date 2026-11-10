@@ -3,6 +3,7 @@ Security - bcrypt password hashing และ JWT (HS256)
 payload: sub (user id), role, type (access/refresh), iat, exp
 """
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
@@ -30,6 +31,15 @@ def get_password_hash(password: str) -> str:
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
+
+
+async def hash_password(password: str) -> str:
+    """bcrypt is CPU-bound. Keep it off the event loop so one login cannot stall the instance."""
+    return await asyncio.to_thread(get_password_hash, password)
+
+
+async def check_password(plain_password: str, hashed_password: str) -> bool:
+    return await asyncio.to_thread(verify_password, plain_password, hashed_password)
 
 
 def _create_token(

@@ -53,7 +53,7 @@ export default function StudentDashboard() {
       <div className="grid">
         <StatCard
           title="คำร้องของฉัน"
-          value={data?.requests.total}
+          value={data?.requests?.total}
           note={
             data && (
               <div style={{ fontSize: '0.78rem', marginTop: 4 }}>
@@ -73,7 +73,7 @@ export default function StudentDashboard() {
 
         <StatCard
           title="การจองของฉัน"
-          value={data?.bookings.total}
+          value={data?.bookings?.total}
           note={
             data && (
               <div style={{ fontSize: '0.78rem', marginTop: 4 }}>
@@ -149,13 +149,13 @@ export default function StudentDashboard() {
           <div className="card-title-row">
             <h2 className="section-title" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
               แจ้งเตือน
-              {data?.notifications.total > 0 && (
+              {data?.notifications?.total > 0 && (
                 <span className="count-tag">
                   {data.notifications.total}
                 </span>
               )}
             </h2>
-            {data?.notifications.total > 0 && (
+            {data?.notifications?.total > 0 && (
               <button
                 type="button"
                 className="button button-sm secondary-button"

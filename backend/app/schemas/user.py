@@ -4,7 +4,7 @@ User / Auth schemas
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from app.common.constants import UserRole
 
@@ -40,6 +40,14 @@ class UserUpdate(BaseModel):
     phone_number: str | None = Field(None, max_length=20)
     department: str | None = Field(None, max_length=100)
     avatar_url: str | None = Field(None, max_length=500)
+
+    @field_validator("full_name", mode="before")
+    @classmethod
+    def full_name_cannot_be_null(cls, value: object) -> object:
+        # Omitting the field is a partial update. JSON null would hit the NOT NULL column and 500.
+        if value is None:
+            raise ValueError("full_name cannot be null")
+        return value
 
 
 class UserPasswordUpdate(BaseModel):

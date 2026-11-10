@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../../api/client'
 import { useFlash } from '../../components/Flash'
 import { PageHeader } from '../../components/ui'
-import { ALLOWED_UPLOADS, MAX_FILES, MAX_FILE_MB, PRIORITIES, REQUEST_TYPES, statusLabel } from '../../lib/format'
+import { ALLOWED_UPLOADS, MAX_FILES, MAX_FILE_MB, MAX_TOTAL_MB, PRIORITIES, REQUEST_TYPES, statusLabel } from '../../lib/format'
 
 export default function CreateRequest() {
   const flash = useFlash()
@@ -22,18 +22,28 @@ export default function CreateRequest() {
 
   const set = (field) => (e) => setForm({ ...form, [field]: e.target.value })
 
+  const fileError = (picked) => {
+    if (picked.length > MAX_FILES) return `You can attach at most ${MAX_FILES} files.`
+    const tooBig = picked.find((f) => f.size > MAX_FILE_MB * 1024 * 1024)
+    if (tooBig) return `${tooBig.name} is larger than ${MAX_FILE_MB} MB.`
+    const total = picked.reduce((sum, file) => sum + file.size, 0)
+    if (total > MAX_TOTAL_MB * 1024 * 1024) return `Attachments must total ${MAX_TOTAL_MB} MB or less.`
+    return null
+  }
+
   const onFiles = (e) => {
     const picked = Array.from(e.target.files)
-    const tooBig = picked.find((f) => f.size > MAX_FILE_MB * 1024 * 1024)
-    if (picked.length > MAX_FILES) setError(`You can attach at most ${MAX_FILES} files.`)
-    else if (tooBig) setError(`${tooBig.name} is larger than ${MAX_FILE_MB} MB.`)
-    else setError(null)
+    setError(fileError(picked))
     setFiles(picked)
   }
 
   const onSubmit = async (e) => {
     e.preventDefault()
-    if (files.length > MAX_FILES) return
+    const problem = fileError(files)
+    if (problem) {
+      setError(problem)
+      return
+    }
     setSubmitting(true)
     setError(null)
     // multipart/form-data: ฟิลด์ข้อความ + ไฟล์หลายไฟล์ในชื่อ "files"
@@ -142,7 +152,7 @@ export default function CreateRequest() {
             </label>
             <input id="files" type="file" multiple accept={ALLOWED_UPLOADS} onChange={onFiles} />
             <small className="muted">
-              Up to {MAX_FILES} files, {MAX_FILE_MB} MB each: images, PDF, Word or Excel.
+              Up to {MAX_FILES} files, {MAX_FILE_MB} MB each, {MAX_TOTAL_MB} MB total: images, PDF, Word or Excel.
             </small>
             {files.length > 0 && (
               <ul className="file-list" aria-label="Selected files">

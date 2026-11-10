@@ -5,8 +5,9 @@
 # deploy ถูกข้ามจนกว่าจะตั้ง repository variable DEPLOY_ENABLED=true (เหมือน backend-cd)
 #
 # ตัวแปรใน GitHub Environment: WEB_BUCKET, API_BASE_URL (+ GCP_PROJECT_ID, WIF_PROVIDER, DEPLOYER_SA)
-# เว็บเปิดที่ https://storage.googleapis.com/<WEB_BUCKET>/index.html จึง build ด้วย --base=/<bucket>/
-# และ router ฝั่ง React ต้องใช้ HashRouter (bucket ไม่มี rewrite ทุก path ไป index.html)
+# เว็บเปิดที่ https://<WEB_BUCKET>.storage.googleapis.com/index.html (origin ของ bucket นี้โดยเฉพาะ)
+# จึง build ด้วย --base=/  และ router ใช้ HashRouter (bucket ไม่ rewrite ทุก path ไป index.html)
+# ห้ามใช้ https://storage.googleapis.com เพราะเป็น origin ร่วมของทุก bucket สาธารณะ (localStorage รั่วได้)
 name: frontend-cd
 
 on:
@@ -45,8 +46,9 @@ jobs:
 
   deploy:
     needs: build
+    # success() is required so a failed lint/build does not still upload.
     if: >-
-      github.event_name != 'pull_request' && vars.DEPLOY_ENABLED == 'true' &&
+      success() && github.event_name != 'pull_request' && vars.DEPLOY_ENABLED == 'true' &&
       (github.ref_name == 'main' || github.ref_name == 'dev')
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -68,10 +70,20 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
 
-      - name: Build for the bucket path
+      - name: Build for the bucket host (base=/)
         env:
           VITE_API_BASE_URL: ${{ vars.API_BASE_URL }}
-        run: npx vite build --base="/$WEB_BUCKET/"
+        run: |
+          if [ -z "$VITE_API_BASE_URL" ]; then
+            echo "::error::GitHub environment variable API_BASE_URL is empty. The built site would call localhost."
+            exit 1
+          fi
+          if [ -z "$WEB_BUCKET" ]; then
+            echo "::error::GitHub environment variable WEB_BUCKET is empty."
+            exit 1
+          fi
+          # Virtual-hosted URL https://<bucket>.storage.googleapis.com/ so asset paths are /assets/...
+          npx vite build --base=/
 
       - name: Authenticate to Google Cloud (WIF, no JSON key)
         uses: google-github-actions/auth@v3
@@ -82,16 +94,31 @@ jobs:
 
       - name: Upload to Cloud Storage
         run: |
-          # assets มี hash ในชื่อไฟล์ จึง cache ได้นาน; index.html ห้าม cache ผู้ใช้จะได้เวอร์ชันใหม่ทันที
-          gcloud storage rsync dist "gs://$WEB_BUCKET" --recursive \
+          # Hashed assets can be cached for a year. index.html is uploaded separately so it is
+          # never given that Cache-Control, even for a moment.
+          gcloud storage rsync dist/assets "gs://$WEB_BUCKET/assets" --recursive \
             --delete-unmatched-destination-objects \
             --cache-control="public, max-age=31536000, immutable"
-          gcloud storage objects update "gs://$WEB_BUCKET/index.html" \
-            --cache-control="no-cache, max-age=0"
+          find dist -maxdepth 1 -type f ! -name 'index.html' -print0 |
+            while IFS= read -r -d '' file; do
+              gcloud storage cp "$file" "gs://$WEB_BUCKET/$(basename "$file")" \
+                --cache-control="public, max-age=86400"
+            done
+          gcloud storage cp dist/index.html "gs://$WEB_BUCKET/index.html" \
+            --cache-control="no-cache, max-age=0, must-revalidate" \
+            --content-type="text/html; charset=utf-8"
 
       - name: Smoke test
-        run: curl -fsS "https://storage.googleapis.com/$WEB_BUCKET/index.html" | grep -q '<div id="root">'
+        run: |
+          origin="https://$WEB_BUCKET.storage.googleapis.com"
+          html=$(curl -fsS "$origin/index.html")
+          printf '%s' "$html" | grep -q '<div id="root">'
+          printf '%s' "$html" | grep -q 'src="/assets/'
+          js=$(printf '%s' "$html" | grep -oE '/assets/[^" ]+\.js' | head -n1)
+          test -n "$js"
+          ctype=$(curl -fsSI "$origin$js" | tr -d '\r' | awk 'BEGIN{IGNORECASE=1} /^content-type:/{print $2; exit}')
+          printf '%s' "$ctype" | grep -qi javascript
 
       - name: Summary
         run: |
-          echo "### Frontend: https://storage.googleapis.com/$WEB_BUCKET/index.html" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Frontend: https://$WEB_BUCKET.storage.googleapis.com/index.html" >> "$GITHUB_STEP_SUMMARY"
