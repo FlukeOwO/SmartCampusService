@@ -57,6 +57,41 @@ async def test_login_and_refresh(client):
     assert refreshed.json()["access_token"]
 
 
+async def test_login_checks_password_off_the_event_loop(client, monkeypatch):
+    import asyncio
+
+    seen = []
+    original = asyncio.to_thread
+
+    async def spy(fn, *args, **kwargs):
+        seen.append(getattr(fn, "__name__", ""))
+        return await original(fn, *args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "to_thread", spy)
+    await make_user(UserRole.STUDENT, email="thread@test.dev")
+    resp = await client.post(
+        f"{API}/auth/login", json={"email": "thread@test.dev", "password": "password123"}
+    )
+    assert resp.status_code == 200, resp.text
+    assert "verify_password" in seen
+
+
+async def test_update_me_null_full_name_is_422(client, student):
+    resp = await client.put(f"{API}/auth/me", headers=auth(student), json={"full_name": None})
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["message"] == "Invalid request data"
+
+
+async def test_update_me_keeps_full_name_when_omitted(client, student):
+    resp = await client.put(
+        f"{API}/auth/me", headers=auth(student), json={"phone_number": "0812345678"}
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["full_name"] == student.full_name
+    assert body["phone_number"] == "0812345678"
+
+
 async def test_login_wrong_password(client, student):
     resp = await client.post(
         f"{API}/auth/login", json={"email": student.email, "password": "wrong-password"}

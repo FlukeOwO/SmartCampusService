@@ -6,6 +6,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
 from fastapi import Request as HttpRequest
+from fastapi.exceptions import RequestValidationError
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.base_models import Page, PageParams
@@ -30,6 +32,28 @@ DB = Annotated[AsyncSession, Depends(get_db)]
 Pagination = Annotated[PageParams, Depends()]
 
 
+def _request_form(
+    title: str,
+    description: str,
+    request_type: RequestType,
+    priority: RequestPriority,
+    location: str | None,
+    contact_phone: str | None,
+) -> RequestCreate:
+    """Validate form fields with the schema so a short title is 422, not a 500."""
+    try:
+        return RequestCreate(
+            title=title,
+            description=description,
+            request_type=request_type,
+            priority=priority,
+            location=location,
+            contact_phone=contact_phone,
+        )
+    except ValidationError as exc:
+        raise RequestValidationError(exc.errors()) from exc
+
+
 @router.post("", response_model=RequestResponse, status_code=status.HTTP_201_CREATED)
 async def create_request(
     user: CurrentUser,
@@ -42,15 +66,8 @@ async def create_request(
     contact_phone: Annotated[str | None, Form()] = None,
     files: Annotated[list[UploadFile] | None, File()] = None,
 ):
-    """สร้างคำร้อง (multipart/form-data) พร้อมไฟล์แนบได้สูงสุด 5 ไฟล์ ไฟล์ละ 10 MB"""
-    data = RequestCreate(
-        title=title,
-        description=description,
-        request_type=request_type,
-        priority=priority,
-        location=location,
-        contact_phone=contact_phone,
-    )
+    """สร้างคำร้อง (multipart/form-data) พร้อมไฟล์แนบได้สูงสุด 3 ไฟล์ ไฟล์ละ 8 MB รวมไม่เกิน 24 MB"""
+    data = _request_form(title, description, request_type, priority, location, contact_phone)
     return await RequestService(db).create(user, data, files or [])
 
 

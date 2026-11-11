@@ -44,7 +44,7 @@ src/
 | เรื่อง | ทำแบบนี้ |
 |---|---|
 | URL ของ API | ผ่าน `api()` ใน `src/api/client.js` เท่านั้น (อ่าน `VITE_API_BASE_URL`) ห้ามเขียน localhost ตายตัว |
-| Router | `HashRouter` (`/#/student`) เพราะบน cloud โฮสต์บน Cloud Storage |
+| Router | `HashRouter` (`/#/student`) เพราะบน cloud โฮสต์บน Cloud Storage ที่ `https://<bucket>.storage.googleapis.com/index.html` (`base=/`) |
 | เวลา | ค่าจาก `<input type="datetime-local">` แปลงด้วย `localInputToIso()` ก่อนส่ง (API ต้องมี timezone) |
 | สิทธิ์ | ซ่อน/แสดงเมนูตาม `user.role` (`student` / `staff` / `admin`) แต่ backend ตรวจสิทธิ์ซ้ำเสมอ |
 | Error | แสดง `err.message` จาก `ApiError` · 401 = token หมดอายุ (client จัดการให้), 409 = จองซ้อน/ข้อมูลซ้ำ |

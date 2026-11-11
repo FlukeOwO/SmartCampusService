@@ -126,7 +126,8 @@ npm run dev          # http://localhost:5173 เรียก API ที่ http:
 ```
 
 Frontend อ่าน URL ของ API จาก `import.meta.env.VITE_API_BASE_URL` ห้ามเขียน localhost ตายตัวในโค้ด
-และใช้ HashRouter เพราะบน cloud โฮสต์บน Cloud Storage (ดู `.github/workflows/frontend-cd.yml`)
+และใช้ HashRouter เพราะบน cloud โฮสต์บน Cloud Storage ที่
+`https://<bucket>.storage.googleapis.com/index.html` (ดู `.github/workflows/frontend-cd.yml`)
 
 **รัน backend โดยไม่ใช้ Docker** (ต้องมี PostgreSQL 15 และ Python 3.11 ขึ้นไป)
 

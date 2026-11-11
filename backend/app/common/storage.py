@@ -13,6 +13,7 @@ from abc import ABC, abstractmethod
 from datetime import timedelta
 from functools import lru_cache
 from pathlib import Path, PurePosixPath
+from urllib.parse import quote
 
 import aiofiles
 from fastapi import UploadFile
@@ -25,6 +26,17 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 _CHUNK = 64 * 1024
+
+
+def content_disposition(filename: str, disposition: str = "inline") -> str:
+    """RFC 6266 header. Do not drop raw filenames (Thai, quotes, CR/LF) into the header."""
+    raw = (filename or "download").replace("\r", "").replace("\n", "").replace("\x00", "")
+    ascii_fallback = (
+        "".join(ch if 32 <= ord(ch) < 127 and ch not in '"\\' else "_" for ch in raw).strip("._")
+        or "download"
+    )
+    encoded = quote(raw, safe="")
+    return f"{disposition}; filename=\"{ascii_fallback[:150]}\"; filename*=UTF-8''{encoded}"
 
 
 class StorageProvider(ABC):
@@ -108,7 +120,7 @@ class GCSStorageProvider(StorageProvider):
             version="v4",
             method="GET",
             expiration=timedelta(minutes=settings.SIGNED_URL_EXPIRE_MINUTES),
-            response_disposition=f'inline; filename="{filename}"',
+            response_disposition=content_disposition(filename),
             **self._signing_kwargs(),
         )
 

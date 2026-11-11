@@ -43,7 +43,7 @@
 
 | บริการ | What it is | Role ในระบบ | Why this (แทนอะไร และเสียอะไร) |
 |---|---|---|---|
-| **Cloud Run** | รัน container แบบ serverless, scale 0→N ตาม request | รัน FastAPI (`campus-api`) และ migration job | แทน **Compute Engine (VM)**: ไม่ต้องดูแล OS, scale อัตโนมัติ, scale-to-zero จ่ายเฉพาะตอนมี request (ค่า compute ~$0 ในโควตาฟรี) · แทน **GKE**: ไม่ต้องดูแล cluster ซึ่งเกินจำเป็นสำหรับ 1 service · แทน **Cloud Functions**: ระบบเป็น API ทั้งชุดที่ต้องการ transaction และ connection pool ไม่ใช่งาน event สั้น ๆ · เสีย: cold start ~1–2 วินาทีหลังว่างนาน |
+| **Cloud Run** | รัน container แบบ serverless, scale 0→N ตาม request | รัน FastAPI (`campus-api`) และ migration job | แทน **Compute Engine (VM)**: ไม่ต้องดูแล OS, scale อัตโนมัติ, scale-to-zero จ่ายเฉพาะตอนมี request (ค่า compute ~$0 ในโควตาฟรี) · แทน **GKE**: ไม่ต้องดูแล cluster ซึ่งเกินจำเป็นสำหรับ 1 service · แทน **Cloud Functions**: ระบบเป็น API ทั้งชุดที่ต้องการ transaction และ connection pool ไม่ใช่งาน event สั้น ๆ · เสีย: cold start ~1–2 วินาทีหลังว่างนาน (หน้าเว็บแสดงสถานะ "waking up" แล้วลองใหม่; วันสาธิตใช้ `ops.sh warmup prod on` เพื่อตั้ง min-instances=1) |
 | **Cloud SQL for PostgreSQL** | Relational DB แบบ managed (backup, patch, failover ให้) | เก็บผู้ใช้ คำร้อง การจอง การแจ้งเตือน | ระบบจองต้องการ **ACID**, row lock (`SELECT ... FOR UPDATE`) และ exclusion constraint กันเวลาทับ ซึ่ง **Firestore/NoSQL** (BASE, eventual consistency) ทำไม่ได้ตรง ๆ · แทนการลง PostgreSQL บน VM: ไม่ต้องทำ backup/patch เอง · แทน **Spanner**: แพงเกินงบมาก · เสีย: ค่าใช้จ่ายคงที่รายชั่วโมง (~$9–10/เดือน) เป็นก้อนใหญ่สุดของระบบ |
 | **Cloud Storage** (2 bucket) | Object storage, เข้าถึงผ่าน HTTPS API, durability 11 nines | `campus-uploads` (private) เก็บไฟล์แนบ, `campus-web` (public) เก็บไฟล์ React | ไฟล์แนบเป็นข้อมูลไม่มีโครงสร้าง อ่านทั้งไฟล์ทีละครั้ง จึงเหมาะกับ **object storage** มากกว่า **Filestore (file/NFS)** ที่แพงกว่ามากและต้องผูกกับ VM หรือ **Persistent Disk (block)** ที่ผูกกับเครื่องเดียว ทำให้ container ไม่ stateless · เปิดไฟล์ผ่าน V4 Signed URL 15 นาที จึงไม่ต้องเปิด bucket สาธารณะ |
 | **VPC + Direct VPC Egress** | เครือข่ายส่วนตัว + ให้ Cloud Run ส่ง traffic เข้า VPC ได้โดยตรง | ทางเดียวที่ API คุยกับ DB (private IP) | แทน **Serverless VPC Access connector** ใน proposal: ไม่มี VM ของ connector ที่คิดเงินตลอดเวลา และ scale ตาม service · ตั้ง `private-ranges-only` จึงไม่ต้องมี **Cloud NAT** (~$32/เดือนตามบทที่ 8) |
@@ -91,9 +91,10 @@
 
 ### Scalability
 
-- Cloud Run autoscale ตาม concurrency (80 request/instance) จาก 0 ถึง 3 instance (prod) โดยไม่ต้องตั้งกฎ CPU เอง
+- Cloud Run autoscale ตาม concurrency (**20** request/instance, ไม่ใช่ 80) จาก 0 ถึง 3 instance (prod) โดยไม่ต้องตั้งกฎ CPU เอง
 - จุดคอขวดคือ **connection ของ DB**: แต่ละ instance เปิดได้สูงสุด 5 (pool 3 + overflow 2) → prod 15 + dev 5 + job 1 ≈ 21 connection
-  จึงต้องจำกัด `max-instances` · ถ้าต้องรับโหลดมากขึ้น ขยับ tier ของ Cloud SQL หรือเพิ่ม connection pooler
+  จึงต้องจำกัด `max-instances` และไม่ให้ concurrency สูงกว่า pool มาก (เดิม 80 ทำให้ request ค้างจนครบ `DB_POOL_TIMEOUT` แล้วเพิ่ง error)
+  ถ้า pool เต็ม API ตอบ **503** ภายใน 10 วินาที และหน้าเว็บลองใหม่เอง · ถ้าต้องรับโหลดมากขึ้น ขยับ tier ของ Cloud SQL หรือเพิ่ม connection pooler
 - ทดสอบได้ด้วย `backend/scripts/loadtest.py` แล้วดูจำนวน instance ใน dashboard
 
 ### Resiliency patterns (บทที่ 7)
@@ -102,15 +103,21 @@
 |---|---|
 | Health check | `/healthz` (startup probe ไม่แตะ DB), `/readyz` (ตรวจ DB) |
 | Rate limiting | `POST /auth/login` 5 ครั้ง/นาที/IP |
-| Retry / self-healing | `pool_pre_ping` ตัด connection ที่ตายแล้วต่อใหม่ · Cloud Run สร้าง instance ใหม่แทนตัวที่ล้มเอง · GCS client retry ให้ในตัว |
+| Retry / self-healing | `pool_pre_ping` ตัด connection ที่ตายแล้วต่อใหม่ · Cloud Run สร้าง instance ใหม่แทนตัวที่ล้มเอง · GCS client retry ให้ในตัว · หน้าเว็บ retry GET เมื่อเจอ cold start / 503 และไม่ล้าง session ถ้าเซิร์ฟเวอร์ยังไม่ตอบ |
 | Graceful shutdown | uvicorn เป็น PID 1 รับ SIGTERM แล้วปิด connection pool |
 | Defense in depth | กันจองซ้อน 2 ชั้น: row lock ในแอป + exclusion constraint ใน DB |
 
 ### Security
 
-JWT (access 30 นาที / refresh 7 วัน) + RBAC 3 role, role อ่านจาก DB ทุกครั้ง · bcrypt · secret อยู่ใน Secret Manager ·
-service account แยกต่อ environment สิทธิ์น้อยที่สุด · WIF แทน JSON key · bucket ไฟล์แนบ private + Signed URL หลังตรวจสิทธิ์ ·
-ตรวจไฟล์ด้วยนามสกุล + magic bytes + จำกัด 10 MB · Swagger ปิดบน production · error ไม่ส่ง stack trace
+JWT (access 30 นาที / refresh 7 วัน) เก็บใน `localStorage` · RBAC 3 role, role อ่านจาก DB ทุกครั้ง ·
+bcrypt รันนอก event loop (`asyncio.to_thread`) เพื่อไม่ให้ login หนึ่งครั้งไปค้างทั้ง instance ·
+secret อยู่ใน Secret Manager · service account ของ API แยกต่อ environment ·
+**deployer คนละตัวระหว่าง dev กับ prod** และ WIF เชื่อเฉพาะ GitHub Environment นั้น (ไม่ใช่ทั้ง repo) ·
+frontend อยู่ที่ `https://<web-bucket>.storage.googleapis.com` ซึ่งเป็น origin ของ bucket นี้เท่านั้น
+(`https://storage.googleapis.com/<bucket>/` เป็น origin ร่วมของทุก bucket สาธารณะ จึงอ่าน token ของกันได้) ·
+`CORS_ORIGINS` ใส่ origin นั้นแบบตรงตัว · bucket ไฟล์แนบ private + Signed URL หลังตรวจสิทธิ์ ·
+ตรวจไฟล์ด้วยนามสกุล + magic bytes + จำกัด 8 MB/ไฟล์ และรวม 24 MB (ต่ำกว่าเพดาน request 32 MiB ของ Cloud Run) ·
+Swagger ปิดบน production · error ไม่ส่ง stack trace · บัญชี demo ใน `seed.py` สร้างไม่ได้เมื่อ `ENVIRONMENT=production`
 
 ---
 
@@ -136,7 +143,7 @@ service account แยกต่อ environment สิทธิ์น้อยท
 ## 6. CI/CD และ Deployment strategy (บทที่ 7, Bonus)
 
 - **CI** (`backend-ci.yml`): lint, format, migration ขึ้น-ลง-ขึ้น, pytest บน PostgreSQL 15, docker build
-- **CD** (`backend-cd.yml`, `frontend-cd.yml`): WIF → build/push → migration job → deploy revision ใหม่แบบ **ยังไม่รับ traffic** → smoke test บน tag URL → ย้าย traffic
+- **CD** (`backend-cd.yml`, `frontend-cd.yml`): รัน lint + pytest ใน workflow ก่อน deploy (`success()` จึงไม่ข้าม test ที่ล้ม) → WIF → build/push → migration job → deploy revision ใหม่แบบ **ยังไม่รับ traffic** → smoke test **`/readyz`** (ตรวจ DB ไม่ใช่แค่ `/healthz`) บน tag URL → ย้าย traffic
 - **Strategy:** Cloud Run เก็บ revision เดิมไว้ทุกครั้ง การ deploy จึงเป็นแบบ **Blue-Green**: revision ใหม่ (green) ผ่าน smoke test ก่อน แล้วสลับ traffic ทั้งหมด
   rollback คือสลับกลับในไม่กี่วินาที (`ops.sh rollback`) โดยไม่ต้องจ่ายค่าเครื่องสองชุด เพราะ revision ที่ไม่มี traffic scale เป็น 0
 - **Canary:** รัน `backend-cd` ด้วยมือ ใส่ `traffic_percent=10` แล้วค่อย `ops.sh promote` หรือ `ops.sh canary prod 50`
@@ -219,10 +226,10 @@ service account แยกต่อ environment สิทธิ์น้อยท
 | ลำดับ | งาน | ใคร |
 |---|---|---|
 | 1 | `./setup.sh shared` แล้ว `./setup.sh env dev` | Owner ของ project |
-| 2 | ตั้ง startup probe `/healthz` ใน Console | Owner |
+| 2 | startup probe `/healthz` ถูกตั้งโดย `setup.sh` และ `backend-cd` (ไม่ต้องไปกดใน Console) | Owner |
 | 3 | สร้าง GitHub Environments `dev`/`prod` ใส่ตัวแปร (รวม `WEB_BUCKET`, `API_BASE_URL`) และตั้ง `DEPLOY_ENABLED=true` | Owner ของ repo |
 | 4 | push เข้า `dev` ให้ CD deploy จริงครั้งแรก, รัน `demo_race.py` กับ dev | Backend |
 | 5 | `./setup.sh dashboard dev`, `./setup.sh budget <billing>` | Backend |
-| 6 | Frontend เรียก `VITE_API_BASE_URL`, ใช้ HashRouter, ทดสอบผ่าน bucket | Frontend |
+| 6 | Frontend เรียก `VITE_API_BASE_URL`, ใช้ HashRouter, เปิดที่ `https://<bucket>.storage.googleapis.com/index.html` | Frontend |
 | 7 | `./setup.sh env prod`, `seed prod`, merge `dev` → `main` | ทั้งทีม |
 | 8 | ก่อนวันสาธิต: `ops.sh db-ha on`, ซ้อมสคริปต์ข้อ 10 · หลังสาธิต: `db-ha off` | Backend |

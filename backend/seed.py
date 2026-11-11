@@ -15,6 +15,7 @@ import os
 from sqlalchemy import select
 
 from app.common.constants import EquipmentStatus, RoomStatus, RoomType, UserRole
+from app.core.config import settings
 from app.core.database import AsyncSessionLocal, close_db_connection
 from app.core.security import get_password_hash
 from app.models import Equipment, Room, User
@@ -77,8 +78,19 @@ async def ensure_user(db, email, password, full_name, role, student_id=None, sta
     print(f"  + user {email} ({role.value})")
 
 
-async def main() -> None:
+def assert_demo_seed_allowed() -> bool:
+    """Demo accounts use published passwords. Never create them in production."""
     demo = os.getenv("SEED_DEMO_DATA", "false").lower() == "true"
+    if demo and settings.is_production:
+        raise SystemExit(
+            "SEED_DEMO_DATA cannot be used when ENVIRONMENT=production "
+            "(demo passwords are public)"
+        )
+    return demo
+
+
+async def main() -> None:
+    demo = assert_demo_seed_allowed()
     admin_email = os.getenv("SEED_ADMIN_EMAIL")
     admin_password = os.getenv("SEED_ADMIN_PASSWORD")
 
