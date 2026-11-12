@@ -53,7 +53,8 @@ class Settings(BaseSettings):
     DB_SSL: Literal["disable", "require"] = "disable"
     DB_POOL_SIZE: int = 3
     DB_MAX_OVERFLOW: int = 2
-    DB_POOL_TIMEOUT: int = 30
+    # Fail fast when every connection is busy. The frontend retries 503.
+    DB_POOL_TIMEOUT: int = 10
     DB_POOL_RECYCLE: int = 1800
     DB_STATEMENT_TIMEOUT_MS: int = 30000
     DB_ECHO: bool = False
@@ -80,8 +81,11 @@ class Settings(BaseSettings):
     # -------------------------------------------------------------------------
     STORAGE_PROVIDER: Literal["local", "gcs"] = "local"
     LOCAL_STORAGE_PATH: str = "/app/storage"
-    MAX_UPLOAD_SIZE_MB: int = 10
-    MAX_FILES_PER_REQUEST: int = 5
+    # Cloud Run rejects HTTP bodies over 32 MiB before the app sees them.
+    # 3 x 8 MB = 24 MB stays under that limit with room for multipart framing.
+    MAX_UPLOAD_SIZE_MB: int = 8
+    MAX_FILES_PER_REQUEST: int = 3
+    MAX_UPLOAD_TOTAL_MB: int = 24
     GCS_BUCKET_NAME: str = ""
     GCS_PROJECT_ID: str = ""
     SIGNED_URL_EXPIRE_MINUTES: int = 15
@@ -116,6 +120,13 @@ class Settings(BaseSettings):
     @property
     def max_upload_size_bytes(self) -> int:
         return self.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+
+    @property
+    def max_upload_total_bytes(self) -> int:
+        # 32 MiB is the Cloud Run request cap. Keep 1 MiB for multipart boundaries and fields.
+        cloud_run_budget = 31 * 1024 * 1024
+        configured = self.MAX_UPLOAD_TOTAL_MB * 1024 * 1024
+        return min(configured, cloud_run_budget)
 
     @property
     def docs_enabled(self) -> bool:

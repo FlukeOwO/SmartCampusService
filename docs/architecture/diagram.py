@@ -101,7 +101,7 @@ def cicd() -> None:
             registry = ContainerRegistry("Artifact Registry")
             migrate = Run("1. migration job")
             new_rev = Run("2. new revision\n--no-traffic + tag")
-            live = Run("3. smoke test /healthz\nthen 100% traffic\n(or canary %)")
+            live = Run("3. smoke test /readyz\nthen 100% traffic\n(or canary %)")
             web = GCS("frontend bucket\n(gcloud storage rsync)")
 
         repo >> label("push / PR") >> ci

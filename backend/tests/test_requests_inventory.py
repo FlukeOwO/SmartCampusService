@@ -1,3 +1,4 @@
+from app.core.config import settings
 from tests.conftest import API, auth
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
@@ -10,6 +11,35 @@ async def create_request(client, user, files=None):
         data={"title": "Broken projector", "description": "Projector in A101 does not turn on"},
         files=files,
     )
+
+
+async def test_short_title_is_422_not_500(client, student):
+    resp = await client.post(
+        f"{API}/requests",
+        headers=auth(student),
+        data={"title": "ab", "description": "This description is long enough"},
+    )
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["message"] == "Invalid request data"
+
+
+async def test_too_many_attachments_rejected(client, student, monkeypatch):
+    monkeypatch.setattr(settings, "MAX_FILES_PER_REQUEST", 1)
+    resp = await create_request(
+        client,
+        student,
+        files=[
+            ("files", ("a.png", PNG, "image/png")),
+            ("files", ("b.png", PNG, "image/png")),
+        ],
+    )
+    assert resp.status_code == 400, resp.text
+
+
+async def test_attachment_total_over_budget_is_413(client, student, monkeypatch):
+    monkeypatch.setattr(settings, "MAX_UPLOAD_TOTAL_MB", 0)
+    resp = await create_request(client, student, files=[("files", ("photo.png", PNG, "image/png"))])
+    assert resp.status_code == 413, resp.text
 
 
 async def test_request_lifecycle(client, student, staff):

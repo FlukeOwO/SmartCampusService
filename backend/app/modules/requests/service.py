@@ -27,6 +27,7 @@ from app.common.constants import (
 from app.common.exceptions import (
     ForbiddenException,
     NotFoundException,
+    PayloadTooLargeException,
     ValidationException,
 )
 from app.common.storage import get_storage, read_validated_upload
@@ -95,11 +96,24 @@ class RequestService:
         return await self._load(request_id)
 
     # --------------------------------------------------------------- create
-    async def create(self, user: User, data: RequestCreate, files: list[UploadFile]) -> Request:
+    async def _read_uploads(self, files: list[UploadFile]) -> list[tuple[bytes, str, str, str]]:
         if len(files) > settings.MAX_FILES_PER_REQUEST:
             raise ValidationException(f"At most {settings.MAX_FILES_PER_REQUEST} files per request")
-        # ตรวจไฟล์ทั้งหมดก่อนแตะ DB
-        uploads = [await read_validated_upload(f) + (f.filename or "file",) for f in files]
+        uploads: list[tuple[bytes, str, str, str]] = []
+        total = 0
+        for file in files:
+            data, ext, content_type = await read_validated_upload(file)
+            total += len(data)
+            if total > settings.max_upload_total_bytes:
+                raise PayloadTooLargeException(
+                    f"Attachments exceed the {settings.MAX_UPLOAD_TOTAL_MB} MB total limit"
+                )
+            uploads.append((data, ext, content_type, file.filename or "file"))
+        return uploads
+
+    async def create(self, user: User, data: RequestCreate, files: list[UploadFile]) -> Request:
+        # ตรวจไฟล์ทั้งหมดก่อนแตะ DB. รวมทั้งก้อนต้องต่ำกว่าเพดาน 32 MiB ของ Cloud Run
+        uploads = await self._read_uploads(files)
 
         request = Request(
             **{k: getattr(v, "value", v) for k, v in data.model_dump().items()},
@@ -134,7 +148,7 @@ class RequestService:
             raise ValidationException("No files provided")
         if len(request.attachments) + len(files) > settings.MAX_FILES_PER_REQUEST:
             raise ValidationException(f"At most {settings.MAX_FILES_PER_REQUEST} files per request")
-        uploads = [await read_validated_upload(f) + (f.filename or "file",) for f in files]
+        uploads = await self._read_uploads(files)
         saved_keys = await self._store_files(request.id, uploads)
         try:
             return await self._commit_and_reload(request.id)

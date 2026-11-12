@@ -50,10 +50,12 @@ export default function Layout() {
   const navigate = useNavigate()
   const unread = useUnreadCount(Boolean(user))
   const clearFlash = useClearFlash()
+  const [menuOpen, setMenuOpen] = useState(false)
 
   const links = (isStaff ? STAFF_LINKS : STUDENT_LINKS).filter((l) => !l.adminOnly || isAdmin)
 
   const onLogout = () => {
+    setMenuOpen(false)
     clearFlash()
     logout()
     navigate('/login')
@@ -62,7 +64,7 @@ export default function Layout() {
   return (
     <>
       <nav className="navbar">
-        <Link to="/" className="brand">
+        <Link to="/" className="brand" onClick={() => setMenuOpen(false)}>
           <div className="brand-icon">
             <i className="fa-solid fa-graduation-cap" />
           </div>
@@ -70,7 +72,18 @@ export default function Layout() {
         </Link>
 
         {user && (
-          <div className="nav-links">
+          <>
+          <button
+            type="button"
+            className="menu-toggle"
+            aria-label={menuOpen ? 'ปิดเมนู' : 'เปิดเมนู'}
+            aria-expanded={menuOpen}
+            aria-controls="primary-navigation"
+            onClick={() => setMenuOpen((open) => !open)}
+          >
+            <i className={`fa-solid ${menuOpen ? 'fa-xmark' : 'fa-bars'}`} aria-hidden="true" />
+          </button>
+          <div id="primary-navigation" className={`nav-links${menuOpen ? ' is-open' : ''}`}>
             <div className="user-badge">
               <i className="fa-regular fa-circle-user" />
               <span>{user.full_name}</span>
@@ -78,12 +91,12 @@ export default function Layout() {
             </div>
 
             {links.map((link) => (
-              <NavLink key={link.to} to={link.to} end={link.end}>
+              <NavLink key={link.to} to={link.to} end={link.end} onClick={() => setMenuOpen(false)}>
                 <i className={`fa-solid ${link.icon}`} /> {link.label}
               </NavLink>
             ))}
 
-            <NavLink to="/notifications" className="nav-bell" aria-label={`แจ้งเตือน (${unread} ยังไม่อ่าน)`}>
+            <NavLink to="/notifications" className="nav-bell" aria-label={`แจ้งเตือน (${unread} ยังไม่อ่าน)`} onClick={() => setMenuOpen(false)}>
               <i className="fa-solid fa-bell" />
               {unread > 0 && <span className="bell-count">{unread > 99 ? '99+' : unread}</span>}
             </NavLink>
@@ -92,6 +105,7 @@ export default function Layout() {
               <i className="fa-solid fa-right-from-bracket" /> ออกจากระบบ
             </a>
           </div>
+          </>
         )}
       </nav>
 

@@ -15,12 +15,12 @@ GitHub Actions ──(WIF, ไม่มี JSON key)──► Artifact Registry 
 
 | ส่วน | Resource (prod) | dev |
 |---|---|---|
-| API | Cloud Run `campus-api` (1 vCPU / 512 MiB, min 0 / max 3, concurrency 80) | `campus-api-dev` (max 1) |
+| API | Cloud Run `campus-api` (1 vCPU / 512 MiB, min 0 / max 3, concurrency 20) | `campus-api-dev` (max 1) |
 | Migration | Cloud Run Job `campus-migrate` | `campus-migrate-dev` |
 | Seed | Cloud Run Job `campus-seed` (รันมือครั้งเดียว) | `campus-seed-dev` |
 | Database | Cloud SQL `campus-db` → DB `smart_campus`, user `campus_app` | DB `smart_campus_dev`, user `campus_app_dev` |
 | ไฟล์แนบ | `gs://<project>-campus-uploads` (private, lifecycle Nearline 30 วัน / Coldline 180 วัน) | `...-campus-uploads-dev` |
-| Frontend | `gs://<project>-campus-web` (public) | `...-campus-web-dev` |
+| Frontend | `gs://<project>-campus-web` (public, origin `https://<bucket>.storage.googleapis.com`) | `...-campus-web-dev` |
 | Secrets | `db-password`, `jwt-secret-key` | `...-dev` |
 | Runtime SA | `campus-api-sa` | `campus-api-dev-sa` |
 | Image | `asia-southeast1-docker.pkg.dev/<project>/campus/api:<git-sha>` | เหมือนกัน |
@@ -39,11 +39,12 @@ export PROJECT_ID=smart-campus-prod          # REGION ค่าเริ่ม�
 ./setup.sh budget <BILLING_ACCOUNT_ID>        # budget $300 (50/75/90% + forecast 100%) + $20/เดือน
 ```
 
-`env` ตั้ง `CORS_ORIGINS=https://storage.googleapis.com` ให้ตรงกับเว็บที่โฮสต์บน bucket
+`env` ตั้ง `CORS_ORIGINS=https://<WEB_BUCKET>.storage.googleapis.com` ให้ตรงกับเว็บที่โฮสต์บน bucket
+(ห้ามใช้ `https://storage.googleapis.com` เพราะเป็น origin ร่วมของทุก public bucket และ token ใน localStorage จะรั่ว)
 ถ้า frontend ใช้โดเมนอื่น ส่งเป็นอาร์กิวเมนต์ที่ 3 เช่น `./setup.sh env prod https://campus.example.com`
 
-สคริปต์รันซ้ำได้ (resource ที่มีแล้วจะข้าม) จากนั้นตั้ง **startup probe** `HTTP GET /healthz`
-ที่ Console › Cloud Run › service › Edit › Health checks ทั้ง dev และ prod
+สคริปต์รันซ้ำได้ (resource ที่มีแล้วจะข้าม) และตั้ง **startup probe** `HTTP GET /healthz` ให้บน Cloud Run
+(ไม่ต้องไปกดใน Console) พร้อม concurrency 20 และ point-in-time recovery ของ Cloud SQL
 
 > dev ใส่ข้อมูลตัวอย่างได้ด้วย `SEED_DEMO_DATA=true ./setup.sh seed dev <email>` — **ห้ามใช้กับ prod**
 > เพราะบัญชี demo ใช้รหัสผ่านที่รู้กันทั่วไป
@@ -58,7 +59,7 @@ export PROJECT_ID=smart-campus-prod          # REGION ค่าเริ่ม�
 | `GCP_PROJECT_ID` | `smart-campus-prod` | `smart-campus-prod` |
 | `GCP_REGION` | `asia-southeast1` | `asia-southeast1` |
 | `WIF_PROVIDER` | `projects/<number>/locations/global/workloadIdentityPools/github/providers/smart-campus` | เหมือนกัน |
-| `DEPLOYER_SA` | `github-deployer@<project>.iam.gserviceaccount.com` | เหมือนกัน |
+| `DEPLOYER_SA` | `github-deployer-dev@<project>.iam.gserviceaccount.com` | `github-deployer@<project>.iam.gserviceaccount.com` |
 | `SERVICE_NAME` | `campus-api-dev` | `campus-api` |
 | `MIGRATE_JOB` | `campus-migrate-dev` | `campus-migrate` |
 | `WEB_BUCKET` | `<project>-campus-web-dev` | `<project>-campus-web` |
@@ -78,8 +79,8 @@ export PROJECT_ID=smart-campus-prod          # REGION ค่าเริ่ม�
 | Workflow | Trigger | ขั้นตอน |
 |---|---|---|
 | `.github/workflows/backend-ci.yml` | PR เข้า `dev`/`main`, push ที่แก้ `backend/**` | `ruff check` + `ruff format --check` → `alembic upgrade/downgrade/upgrade` → `pytest` (PostgreSQL 15) → `docker build --target production` |
-| `.github/workflows/backend-cd.yml` | push `dev` → env `dev`, push `main` → env `prod` | WIF auth → build + push `:<git-sha>` → migration job → deploy revision แบบ `--no-traffic` → smoke test `/healthz` บน tag URL → ย้าย traffic 100% (รันด้วยมือใส่ `traffic_percent` เพื่อทำ canary ได้) |
-| `.github/workflows/frontend-cd.yml` | PR/push ที่แก้ `frontend/**` | lint + build ทุกครั้ง · push `dev`/`main` → `vite build --base=/<bucket>/` → `gcloud storage rsync` ไป `WEB_BUCKET` → smoke test |
+| `.github/workflows/backend-cd.yml` | push `dev` → env `dev`, push `main` → env `prod` | lint + pytest ต้องผ่าน (`success()`) → WIF auth → build + push `:<git-sha>` → migration job → deploy revision แบบ `--no-traffic` → smoke test **`/readyz`** บน tag URL → ย้าย traffic 100% (รันด้วยมือใส่ `traffic_percent` เพื่อทำ canary ได้) |
+| `.github/workflows/frontend-cd.yml` | PR/push ที่แก้ `frontend/**` | lint + build ทุกครั้ง · push `dev`/`main` → `vite build --base=/` → อัปโหลดไป `WEB_BUCKET` (index.html ไม่ถูก cache แบบ immutable) → smoke test ที่ `https://<bucket>.storage.googleapis.com/index.html` |
 
 จุดที่ pipeline หยุดได้ 3 จุด: **CI ไม่ผ่าน**, **migration ล้ม**, **smoke test ล้ม** —
 ทั้งสามกรณี revision เดิมยังรับ traffic อยู่ (deploy แบบ no-traffic จึงไม่ต้อง rollback อัตโนมัติ)
@@ -88,9 +89,10 @@ export PROJECT_ID=smart-campus-prod          # REGION ค่าเริ่ม�
 
 ```bash
 ./ops.sh status   prod            # revision ที่รับ traffic + สถานะ DB
-./ops.sh rollback prod            # กลับ revision ก่อนหน้า 100% (หรือระบุชื่อ revision)
-./ops.sh canary   prod 10         # ส่ง 10% ไป revision ล่าสุด
-./ops.sh promote  prod            # revision ล่าสุด 100%
+./ops.sh rollback prod            # Ready revision ที่เก่ากว่าตัวที่รับ traffic อยู่ (หรือระบุชื่อ)
+./ops.sh canary   prod 10         # ส่ง 10% ไป revision ล่าสุดที่ Ready เท่านั้น
+./ops.sh promote  prod            # revision ล่าสุดที่ Ready 100% (ปฏิเสธถ้าตัวล่าสุดยังไม่ Ready)
+./ops.sh warmup   prod on         # min-instances=1 ช่วงสาธิต แล้ว ping /readyz (off เพื่อกลับไป scale-to-zero)
 ./ops.sh db-ha    on|off          # Cloud SQL High Availability 2 zone (เปิดช่วงสาธิต)
 ./ops.sh db-stop | db-start       # หยุด/เปิด DB ช่วงไม่ใช้งาน
 ./ops.sh teardown                 # ลบ project หลังจบรายวิชา
@@ -109,7 +111,7 @@ Migration ต้องเข้ากันได้กับโค้ดเว�
 | `POSTGRES_PASSWORD` | Secret Manager | `db-password:latest` |
 | `SECRET_KEY` | Secret Manager | `jwt-secret-key:latest` |
 | `DB_SSL` | env | `require` (Cloud SQL `ENCRYPTED_ONLY`) |
-| `DB_POOL_SIZE`, `DB_MAX_OVERFLOW` | env | `3`, `2` |
+| `DB_POOL_SIZE`, `DB_MAX_OVERFLOW`, `DB_POOL_TIMEOUT` | env | `3`, `2`, `10` (วินาที แล้วตอบ 503) |
 | `STORAGE_PROVIDER`, `GCS_BUCKET_NAME`, `GCS_PROJECT_ID` | env | `gcs`, `<project>-campus-uploads`, `<project>` |
 | `CORS_ORIGINS` | env | URL ของ Frontend เท่านั้น |
 | `ALLOWED_HOSTS` | env | `*.run.app` (+ custom domain ถ้ามี) |
@@ -125,7 +127,8 @@ gcloud run services update campus-api --region asia-southeast1 --update-labels=r
 
 ## 5. Connection budget
 
-แต่ละ instance เปิด connection ได้สูงสุด `DB_POOL_SIZE + DB_MAX_OVERFLOW` = 5 →
+แต่ละ instance เปิด connection ได้สูงสุด `DB_POOL_SIZE + DB_MAX_OVERFLOW` = 5 และรับพร้อมกันได้ 20 request
+(ที่เกินจะรอในคิวของ Cloud Run ไม่ใช่ค้างใน process จนครบ 30 วินาที) →
 prod 3×5 + dev 1×5 + migration job ≈ 21 connection ขณะที่ `db-f1-micro` รับได้น้อย
 ตรวจค่าจริงด้วย `SHOW max_connections;` ก่อนเพิ่ม `max-instances`
 
@@ -137,7 +140,30 @@ prod 3×5 + dev 1×5 + migration job ≈ 21 connection ขณะที่ `db-f1
 - Cloud SQL HA เปิดเฉพาะช่วงสาธิต (`./ops.sh db-ha on`, จบแล้ว `off`)
 - จบรายวิชา: `./ops.sh teardown`
 
-## 7. Local development
+## 7. ถ้าเคย deploy ด้วย origin `https://storage.googleapis.com` แล้ว
+
+รันตามลำดับนี้ก่อน demo (ค่าใน GitHub และบน Cloud Run ไม่อัปเดตเองจากการ merge):
+
+```bash
+export PROJECT_ID=...          # project เดิม
+export REPO=owner/SmartCampusService   # ถ้าไม่ใช่ค่า default ใน setup.sh
+cd infra/gcp
+./setup.sh shared              # สร้าง github-deployer-dev, ผูก WIF แยก environment, เปิด PITR
+# ตั้ง GitHub Environment "dev" variable DEPLOYER_SA = github-deployer-dev@$PROJECT_ID.iam.gserviceaccount.com
+# prod คง DEPLOYER_SA = github-deployer@$PROJECT_ID.iam.gserviceaccount.com
+./setup.sh env dev             # CORS ของ dev, concurrency 20, startup probe, สิทธิ์ราย service
+./setup.sh env prod            # เหมือนกัน และถอด run.developer ทั้ง project / WIF ทั้ง repo ออก
+```
+
+จากนั้น push ให้ `frontend-cd` build ด้วย `--base=/` แล้วเปิดเว็บที่
+
+`https://<WEB_BUCKET>.storage.googleapis.com/index.html`
+
+(ต้องมี `index.html` ใน path — HTTPS ของ bucket ไม่เสิร์ฟ index ที่ `/` ให้เอง)
+
+ช่วงสาธิต ถ้าไม่อยากเจอ cold start: `./ops.sh warmup prod on` แล้วหลังจบ `./ops.sh warmup prod off`
+
+## 8. Local development
 
 ```bash
 cp .env.example .env

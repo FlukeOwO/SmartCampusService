@@ -13,9 +13,10 @@ Base URL: `/api/v1` · Swagger: `/api/v1/docs` (ปิดใน production) · A
   | 403 | role ไม่พอ หรือไม่ใช่เจ้าของข้อมูล |
   | 404 | ไม่พบข้อมูล |
   | 409 | จองซ้อน, อีเมล/รหัสซ้ำ, ลบห้อง/อุปกรณ์ที่มีประวัติการจอง |
-  | 413 | ไฟล์ใหญ่เกิน 10 MB |
-  | 422 | รูปแบบข้อมูลผิด (Pydantic) |
+  | 413 | ไฟล์ใหญ่เกิน 8 MB/ไฟล์ หรือรวมเกิน 24 MB (ต่ำกว่าเพดาน 32 MiB ของ Cloud Run) |
+  | 422 | รูปแบบข้อมูลผิด (Pydantic) รวมถึงฟอร์มคำร้องและ `full_name: null` |
   | 429 | login เกิน 5 ครั้ง/นาที/IP |
+  | 503 | DB ไม่พร้อม (`/readyz`) หรือ connection pool เต็ม (มี `Retry-After`) |
 
 - **List** ทุกตัวรับ `?page=1&page_size=20` (สูงสุด 100) และตอบ `{"items": [...], "total", "page", "page_size"}`
 - **เวลา** ต้องเป็น ISO 8601 ที่มี timezone เช่น `2026-10-20T09:00:00+07:00` (ไม่มี offset → 422) และระบบตอบกลับเป็น UTC
@@ -38,7 +39,7 @@ Base URL: `/api/v1` · Swagger: `/api/v1/docs` (ปิดใน production) · A
 
 | Method | Path | ใคร | หมายเหตุ |
 |---|---|---|---|
-| POST | `/requests` | login | `multipart/form-data`: `title`, `description`, `request_type`, `priority`, `location`, `contact_phone`, `files[]` (≤5 ไฟล์) |
+| POST | `/requests` | login | `multipart/form-data`: `title`, `description`, `request_type`, `priority`, `location`, `contact_phone`, `files[]` (≤3 ไฟล์) |
 | GET | `/requests/me?status=` | login | คำร้องของตัวเอง |
 | GET | `/requests?status=&request_type=&priority=&assigned_staff_id=&search=` | staff | ทั้งหมด |
 | GET | `/requests/{id}` | เจ้าของ / staff | รวม `attachments` |
@@ -50,7 +51,7 @@ Base URL: `/api/v1` · Swagger: `/api/v1/docs` (ปิดใน production) · A
 | POST | `/requests/{id}/attachments` | เจ้าของ | `files[]` |
 | GET | `/requests/{id}/attachments/{aid}/url` | เจ้าของ / staff | `{url, expires_in_seconds}` — Signed URL อายุ 15 นาที |
 
-ไฟล์ที่รับ: `.jpg .jpeg .png .gif .webp .pdf .docx .xlsx` ≤ 10 MB และเนื้อไฟล์ต้องตรงกับนามสกุล (ตรวจ magic bytes)
+ไฟล์ที่รับ: `.jpg .jpeg .png .gif .webp .pdf .docx .xlsx` ≤ 8 MB ต่อไฟล์ และรวมไม่เกิน 24 MB (เนื้อไฟล์ต้องตรงกับนามสกุล ตรวจ magic bytes). Cloud Run ตัด request ที่ใหญ่กว่า 32 MiB ก่อนถึงแอป จึงไม่รับ 5×10 MB
 
 ## Bookings — `/bookings`
 

@@ -11,7 +11,9 @@
 #   ./setup.sh dashboard prod         # Cloud Monitoring dashboard (Observability)
 #   ./setup.sh budget <BILLING_ACCOUNT_ID>
 #
-# Frontend โฮสต์บน bucket สาธารณะ จึงเปิดที่ https://storage.googleapis.com/<bucket>/index.html
+# Frontend โฮสต์บน bucket สาธารณะ คนละ origin ต่อ bucket:
+#   https://<project>-campus-web.storage.googleapis.com/index.html
+# ห้ามใช้ https://storage.googleapis.com เพราะเป็น origin ร่วมของทุก bucket (localStorage ของ token รั่วได้)
 # ถ้าใช้โดเมนอื่น ส่งเป็นอาร์กิวเมนต์ที่ 3: ./setup.sh env prod https://campus.example.com
 # งานหลังติดตั้ง (เปิด HA, หยุด DB, canary, rollback, ลบ project) อยู่ใน ./ops.sh
 #
@@ -21,7 +23,7 @@ set -euo pipefail
 
 : "${PROJECT_ID:?export PROJECT_ID first}"
 REGION="${REGION:-asia-southeast1}"
-REPO="${REPO:-FlukeOwO/SmartCampusService}"
+REPO="${REPO:-Nolimx/SmartCampusService}"
 
 VPC=campus-vpc
 SUBNET=campus-run-subnet
@@ -30,10 +32,31 @@ PSA_RANGE_NAME=campus-psa-range
 PSA_RANGE_START=10.20.0.0
 SQL_INSTANCE=campus-db
 AR_REPO=campus
-DEPLOYER_SA="github-deployer@${PROJECT_ID}.iam.gserviceaccount.com"
+# prod ใช้ github-deployer (ชื่อเดิม) , dev ใช้คนละ service account
+PROD_DEPLOYER_SA="github-deployer@${PROJECT_ID}.iam.gserviceaccount.com"
+DEV_DEPLOYER_SA="github-deployer-dev@${PROJECT_ID}.iam.gserviceaccount.com"
 
 log() { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
 exists() { "$@" >/dev/null 2>&1; }
+
+STARTUP_PROBE="httpGet.path=/healthz,initialDelaySeconds=0,timeoutSeconds=4,periodSeconds=5,failureThreshold=12"
+
+ensure_deployer() {
+  local sa_email=$1
+  local sa_id=${sa_email%%@*}
+  exists gcloud iam service-accounts describe "$sa_email" ||
+    gcloud iam service-accounts create "$sa_id" --display-name="GitHub Actions deployer ($sa_id)"
+  gcloud artifacts repositories add-iam-policy-binding "$AR_REPO" --location="$REGION" \
+    --member="serviceAccount:$sa_email" --role=roles/artifactregistry.writer >/dev/null
+}
+
+bind_deployer_wif() {
+  local sa_email=$1 subject=$2 project_number=$3
+  gcloud iam service-accounts add-iam-policy-binding "$sa_email" \
+    --role=roles/iam.workloadIdentityUser \
+    --member="principal://iam.googleapis.com/projects/${project_number}/locations/global/workloadIdentityPools/github/subject/${subject}" \
+    >/dev/null
+}
 
 gcloud config set project "$PROJECT_ID" >/dev/null
 
@@ -70,8 +93,11 @@ shared() {
       --network="projects/$PROJECT_ID/global/networks/$VPC" --no-assign-ip \
       --storage-type=SSD --storage-size=10 --storage-auto-increase \
       --backup-start-time=19:00 --retained-backups-count=7 \
+      --enable-point-in-time-recovery \
       --maintenance-window-day=SAT --maintenance-window-hour=20 \
       --ssl-mode=ENCRYPTED_ONLY
+  # instance ที่มีอยู่แล้ว (สร้างก่อนมี flag นี้) ต้อง patch แยก
+  gcloud sql instances patch "$SQL_INSTANCE" --enable-point-in-time-recovery --quiet
 
   log "5) Artifact Registry (keep 10 newest images)"
   exists gcloud artifacts repositories describe "$AR_REPO" --location="$REGION" ||
@@ -87,35 +113,39 @@ JSON
     --policy="$policy" --no-dry-run
   rm -f "$policy"
 
-  log "6) GitHub deployer service account"
-  exists gcloud iam service-accounts describe "$DEPLOYER_SA" ||
-    gcloud iam service-accounts create github-deployer --display-name="GitHub Actions deployer"
-  gcloud projects add-iam-policy-binding "$PROJECT_ID" --condition=None \
-    --member="serviceAccount:$DEPLOYER_SA" --role=roles/run.developer >/dev/null
-  gcloud artifacts repositories add-iam-policy-binding "$AR_REPO" --location="$REGION" \
-    --member="serviceAccount:$DEPLOYER_SA" --role=roles/artifactregistry.writer >/dev/null
+  log "6) GitHub deployer service accounts (dev and prod are separate)"
+  ensure_deployer "$PROD_DEPLOYER_SA"
+  ensure_deployer "$DEV_DEPLOYER_SA"
+  # run.developer แบบทั้ง project ถูกถอดตอน ./setup.sh env prod หลังผูกสิทธิ์ราย service แล้ว
 
-  log "7) Workload Identity Federation (GitHub OIDC, this repo only)"
+  log "7) Workload Identity Federation (this repo, and only the dev/prod GitHub Environments)"
   local project_number
   project_number=$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')
   exists gcloud iam workload-identity-pools describe github --location=global ||
     gcloud iam workload-identity-pools create github --location=global --display-name="GitHub"
-  exists gcloud iam workload-identity-pools providers describe smart-campus \
-    --location=global --workload-identity-pool=github ||
+  if ! exists gcloud iam workload-identity-pools providers describe smart-campus \
+    --location=global --workload-identity-pool=github; then
     gcloud iam workload-identity-pools providers create-oidc smart-campus --location=global \
       --workload-identity-pool=github --issuer-uri="https://token.actions.githubusercontent.com" \
       --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref" \
       --attribute-condition="assertion.repository == '$REPO'"
-  gcloud iam service-accounts add-iam-policy-binding "$DEPLOYER_SA" \
-    --role=roles/iam.workloadIdentityUser \
-    --member="principalSet://iam.googleapis.com/projects/$project_number/locations/global/workloadIdentityPools/github/attribute.repository/$REPO" \
-    >/dev/null
+  fi
+  # รันซ้ำแล้วต้องอัปเดต condition ด้วย (create อย่างเดียวไม่แก้ของเดิม)
+  gcloud iam workload-identity-pools providers update-oidc smart-campus --location=global \
+    --workload-identity-pool=github \
+    --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref" \
+    --attribute-condition="assertion.repository == '$REPO'"
+  # subject เป็น environment เมื่อ job ตั้ง environment: (ไม่ใช่ ref)
+  bind_deployer_wif "$PROD_DEPLOYER_SA" "repo:${REPO}:environment:prod" "$project_number"
+  bind_deployer_wif "$DEV_DEPLOYER_SA" "repo:${REPO}:environment:dev" "$project_number"
 
-  log "Done. GitHub Environment variables (dev + prod):"
+  log "Done. GitHub Environment variables:"
   echo "  GCP_PROJECT_ID = $PROJECT_ID"
   echo "  GCP_REGION     = $REGION"
   echo "  WIF_PROVIDER   = projects/$project_number/locations/global/workloadIdentityPools/github/providers/smart-campus"
-  echo "  DEPLOYER_SA    = $DEPLOYER_SA"
+  echo "  DEPLOYER_SA (prod) = $PROD_DEPLOYER_SA"
+  echo "  DEPLOYER_SA (dev)  = $DEV_DEPLOYER_SA"
+  echo "Then run ./setup.sh env dev and ./setup.sh env prod before the next deploy."
 }
 
 # -----------------------------------------------------------------------------
@@ -127,6 +157,11 @@ env_names() {
     dev) SUFFIX="-dev"; DB_NAME=smart_campus_dev; DB_USER=campus_app_dev; APP_ENV=staging; MAX_INSTANCES=1 ;;
     *) echo "env must be prod or dev" >&2; exit 1 ;;
   esac
+  if [ "$env" = "prod" ]; then
+    DEPLOYER_SA="$PROD_DEPLOYER_SA"
+  else
+    DEPLOYER_SA="$DEV_DEPLOYER_SA"
+  fi
   SERVICE="campus-api${SUFFIX}"
   MIGRATE_JOB="campus-migrate${SUFFIX}"
   SEED_JOB="campus-seed${SUFFIX}"
@@ -139,8 +174,17 @@ env_names() {
 }
 
 env_setup() {
-  local env=$1 frontend_origin=${2:-https://storage.googleapis.com}
+  local env=$1
   env_names "$env"
+  local frontend_origin=${2:-}
+  if [ -z "$frontend_origin" ]; then
+    frontend_origin="https://${WEB_BUCKET}.storage.googleapis.com"
+  fi
+  if [ "$frontend_origin" = "https://storage.googleapis.com" ] || [ "$frontend_origin" = "https://storage.googleapis.com/" ]; then
+    echo "Refusing CORS origin https://storage.googleapis.com (shared by every public GCS bucket)." >&2
+    echo "Default is https://${WEB_BUCKET}.storage.googleapis.com — pass that, or your own exact origin." >&2
+    exit 1
+  fi
   local db_host
   db_host=$(gcloud sql instances describe "$SQL_INSTANCE" --format='value(ipAddresses[0].ipAddress)')
 
@@ -224,7 +268,7 @@ JSON
 
   # ^@^ = ใช้ @ เป็นตัวคั่นแทน comma เพราะ CORS_ORIGINS/ALLOWED_HOSTS มี comma
   local envs="^@^ENVIRONMENT=$APP_ENV@DEBUG=false@POSTGRES_SERVER=$db_host@POSTGRES_PORT=5432"
-  envs+="@POSTGRES_USER=$DB_USER@POSTGRES_DB=$DB_NAME@DB_SSL=require@DB_POOL_SIZE=3@DB_MAX_OVERFLOW=2"
+  envs+="@POSTGRES_USER=$DB_USER@POSTGRES_DB=$DB_NAME@DB_SSL=require@DB_POOL_SIZE=3@DB_MAX_OVERFLOW=2@DB_POOL_TIMEOUT=10"
   envs+="@STORAGE_PROVIDER=gcs@GCS_BUCKET_NAME=$BUCKET@GCS_PROJECT_ID=$PROJECT_ID"
   envs+="@CORS_ORIGINS=$frontend_origin@ALLOWED_HOSTS=*.run.app"
   envs+="@LOG_LEVEL=INFO@LOG_FORMAT=json@GCP_PROJECT_ID=$PROJECT_ID"
@@ -254,27 +298,54 @@ JSON
   local svc_flags=(--region="$REGION" --service-account="$API_SA" "${net[@]}"
     --set-env-vars="$envs" --set-secrets="$secrets"
     --cpu=1 --memory=512Mi --min-instances=0 --max-instances="$MAX_INSTANCES"
-    --concurrency=80 --cpu-throttling)
+    --concurrency=20 --cpu-throttling \
+    --startup-probe="$STARTUP_PROBE")
   if exists gcloud run services describe "$SERVICE" --region="$REGION"; then
     # รันซ้ำ: คง image ที่ CD deploy ไว้
     gcloud run services update "$SERVICE" "${svc_flags[@]}"
   else
     gcloud run deploy "$SERVICE" --image="$image" "${svc_flags[@]}" --allow-unauthenticated
   fi
-  echo "ตั้ง startup probe: Console > Cloud Run > $SERVICE > Edit > Health checks > HTTP GET /healthz"
+  log "[$env] Deployer IAM is limited to this environment's Cloud Run resources"
+  ensure_deployer "$DEPLOYER_SA"
+  gcloud run services add-iam-policy-binding "$SERVICE" --region="$REGION" \
+    --member="serviceAccount:$DEPLOYER_SA" --role=roles/run.developer >/dev/null
+  gcloud run jobs add-iam-policy-binding "$MIGRATE_JOB" --region="$REGION" \
+    --member="serviceAccount:$DEPLOYER_SA" --role=roles/run.developer >/dev/null
+  gcloud run jobs add-iam-policy-binding "$SEED_JOB" --region="$REGION" \
+    --member="serviceAccount:$DEPLOYER_SA" --role=roles/run.developer >/dev/null
+  if [ "$env" = "prod" ]; then
+    # สิทธิ์กว้างจากเวอร์ชันเก่า: run.developer ทั้ง project และ WIF ที่เชื่อทั้ง repo
+    local project_number
+    project_number=$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')
+    gcloud projects remove-iam-policy-binding "$PROJECT_ID" \
+      --member="serviceAccount:$PROD_DEPLOYER_SA" --role=roles/run.developer \
+      --condition=None --quiet >/dev/null 2>&1 || true
+    gcloud iam service-accounts remove-iam-policy-binding "$PROD_DEPLOYER_SA" \
+      --role=roles/iam.workloadIdentityUser \
+      --member="principalSet://iam.googleapis.com/projects/${project_number}/locations/global/workloadIdentityPools/github/attribute.repository/${REPO}" \
+      --quiet >/dev/null 2>&1 || true
+  fi
 
   log "[$env] GitHub Environment '$env' variables"
   local api_url
   api_url=$(gcloud run services describe "$SERVICE" --region="$REGION" --format='value(status.url)')
   echo "  SERVICE_NAME = $SERVICE"
   echo "  MIGRATE_JOB  = $MIGRATE_JOB"
+  echo "  DEPLOYER_SA  = $DEPLOYER_SA"
   echo "  WEB_BUCKET   = $WEB_BUCKET"
   echo "  API_BASE_URL = $api_url/api/v1"
-  echo "  Frontend URL = https://storage.googleapis.com/$WEB_BUCKET/index.html"
+  echo "  CORS origin  = $frontend_origin"
+  echo "  Frontend URL = https://$WEB_BUCKET.storage.googleapis.com/index.html"
+  echo "  (open index.html — the bucket root does not serve the website config over HTTPS)"
 }
 
 seed() {
   local env=$1 admin_email=${2:?admin email required}
+  if [ "$env" = "prod" ] && [ "${SEED_DEMO_DATA:-false}" = "true" ]; then
+    echo "SEED_DEMO_DATA=true is refused for prod (demo account passwords are public)." >&2
+    exit 1
+  fi
   env_names "$env"
   local secret="seed-admin-password${SUFFIX}"
   if ! exists gcloud secrets describe "$secret"; then

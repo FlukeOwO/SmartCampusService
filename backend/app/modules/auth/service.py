@@ -16,11 +16,12 @@ from app.common.exceptions import (
 )
 from app.core.security import (
     TokenError,
+    check_password,
     create_access_token,
     create_refresh_token,
     decode_token,
     get_password_hash,
-    verify_password,
+    hash_password,
 )
 from app.models import User
 from app.schemas.user import (
@@ -45,7 +46,7 @@ class AuthService:
         await self._ensure_unique(data)
         user = User(
             email=data.email.lower(),
-            hashed_password=get_password_hash(data.password),
+            hashed_password=await hash_password(data.password),
             full_name=data.full_name,
             student_id=data.student_id,
             staff_id=data.staff_id,
@@ -115,23 +116,27 @@ class AuthService:
     async def update_profile(self, user: User, data: UserUpdate) -> User:
         for field, value in data.model_dump(exclude_unset=True).items():
             setattr(user, field, value)
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except IntegrityError as exc:
+            await self.db.rollback()
+            raise ValidationException("Profile update is invalid") from exc
         await self.db.refresh(user)
         return user
 
     async def change_password(self, user: User, data: UserPasswordUpdate) -> None:
-        if not verify_password(data.current_password, user.hashed_password):
+        if not await check_password(data.current_password, user.hashed_password):
             raise ValidationException("Current password is incorrect")
-        user.hashed_password = get_password_hash(data.new_password)
+        user.hashed_password = await hash_password(data.new_password)
         await self.db.commit()
 
     # ----------------------------------------------------------------- tokens
     async def login(self, data: UserLogin) -> dict:
         user = await self.db.scalar(select(User).where(User.email == data.email.lower()))
         if user is None:
-            verify_password(data.password, _DUMMY_HASH)
+            await check_password(data.password, _DUMMY_HASH)
             raise AuthenticationException("Invalid email or password")
-        if not verify_password(data.password, user.hashed_password):
+        if not await check_password(data.password, user.hashed_password):
             raise AuthenticationException("Invalid email or password")
         if not user.is_active:
             raise AuthenticationException("User account is inactive")
