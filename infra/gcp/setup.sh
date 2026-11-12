@@ -23,7 +23,7 @@ set -euo pipefail
 
 : "${PROJECT_ID:?export PROJECT_ID first}"
 REGION="${REGION:-asia-southeast1}"
-REPO="${REPO:-Nolimx/SmartCampusService}"
+REPO="${REPO:-FlukeOwO/SmartCampusService}"
 
 VPC=campus-vpc
 SUBNET=campus-run-subnet
