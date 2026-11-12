@@ -1,3 +1,6 @@
+# Deploy backend ไป Cloud Run
+#   push dev  -> GitHub Environment "dev"  -> campus-api-dev
+#   push main -> GitHub Environment "prod" -> campus-api
 name: backend-cd
 
 on:
@@ -70,8 +73,6 @@ jobs:
 
   deploy:
     needs: test
-    # success() is required: an `if` replaces the default "needs succeeded" check,
-    # so without it a failing test job still deploys.
     if: ${{ success() && vars.DEPLOY_ENABLED == 'true' && (github.ref_name == 'main' || github.ref_name == 'dev') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -107,39 +108,67 @@ jobs:
           gcloud run jobs update "$MIGRATE_JOB" --image "$IMAGE"
           gcloud run jobs execute "$MIGRATE_JOB" --wait
 
-      - name: Deploy new revision without traffic
+      - name: Check if service exists
+        id: check
+        run: |
+          if gcloud run services describe "$SERVICE" --region "$REGION" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Service exists → deploy with --no-traffic + tag"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Service not found → bootstrap deploy (100% traffic)"
+          fi
+
+      - name: Deploy new revision
         id: deploy
         run: |
           TAG="sha-${GITHUB_SHA::7}"
-          # concurrency 20 stays near the DB pool (5) so requests are not stuck for the pool timeout.
-          # startup probe is /healthz (no DB) so a slow database does not block the instance from starting.
-          gcloud run deploy "$SERVICE" --image "$IMAGE" --no-traffic --tag "$TAG" --quiet \
+          EXTRA_FLAGS=""
+          if [ "${{ steps.check.outputs.exists }}" = "true" ]; then
+            EXTRA_FLAGS="--no-traffic --tag $TAG"
+          fi
+
+          gcloud run deploy "$SERVICE" \
+            --image "$IMAGE" \
+            --quiet \
             --concurrency=20 \
-            --startup-probe="httpGet.path=/healthz,initialDelaySeconds=0,timeoutSeconds=4,periodSeconds=5,failureThreshold=12"
+            --startup-probe="httpGet.path=/healthz,initialDelaySeconds=0,timeoutSeconds=4,periodSeconds=5,failureThreshold=12" \
+            $EXTRA_FLAGS
+
           REVISION=$(gcloud run services describe "$SERVICE" --format='value(status.latestCreatedRevisionName)')
           SERVICE_URL=$(gcloud run services describe "$SERVICE" --format='value(status.url)')
+
+          if [ "${{ steps.check.outputs.exists }}" = "true" ]; then
+            TAG_URL="${SERVICE_URL/https:\/\//https://$TAG---}"
+          else
+            TAG_URL="$SERVICE_URL"
+          fi
+
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "revision=$REVISION" >> "$GITHUB_OUTPUT"
-          echo "tag_url=${SERVICE_URL/https:\/\//https://$TAG---}" >> "$GITHUB_OUTPUT"
+          echo "test_url=$TAG_URL" >> "$GITHUB_OUTPUT"
           echo "service_url=$SERVICE_URL" >> "$GITHUB_OUTPUT"
 
-      - name: Smoke test new revision (/readyz, includes the database)
+      - name: Smoke test (/readyz)
         run: |
-          url="${{ steps.deploy.outputs.tag_url }}/readyz"
+          url="${{ steps.deploy.outputs.test_url }}/readyz"
+          echo "Testing $url"
           for i in 1 2 3 4 5 6 7 8; do
             code=$(curl -sS -o /tmp/readyz.json -w '%{http_code}' --max-time 15 "$url" || echo 000)
             if [ "$code" = "200" ] && grep -q '"ready"' /tmp/readyz.json; then
+              echo "Smoke test passed"
               cat /tmp/readyz.json
               exit 0
             fi
-            echo "readyz not ready (attempt $i, HTTP $code)"
+            echo "Attempt $i failed (HTTP $code)"
             cat /tmp/readyz.json 2>/dev/null || true
             sleep 5
           done
-          echo "::error::Smoke test /readyz failed - traffic stays on the previous revision"
+          echo "::error::Smoke test /readyz failed"
           exit 1
 
       - name: Shift traffic to new revision
+        if: steps.check.outputs.exists == 'true'
         env:
           PERCENT: ${{ inputs.traffic_percent || '100' }}
         run: |
@@ -151,7 +180,7 @@ jobs:
             --to-revisions "${{ steps.deploy.outputs.revision }}=$PERCENT"
 
       - name: Remove deployment tag
-        if: always() && steps.deploy.outputs.tag != ''
+        if: always() && steps.check.outputs.exists == 'true' && steps.deploy.outputs.tag != ''
         run: |
           gcloud run services update-traffic "$SERVICE" \
             --remove-tags "${{ steps.deploy.outputs.tag }}" || true
@@ -162,5 +191,5 @@ jobs:
             echo "### Deployed ${{ steps.deploy.outputs.revision }}"
             echo "- Image: \`$IMAGE\`"
             echo "- URL: ${{ steps.deploy.outputs.service_url }}"
-            echo "- Rollback: \`gcloud run services update-traffic $SERVICE --region $REGION --to-revisions=<previous-revision>=100\`"
+            echo "- Mode: ${{ steps.check.outputs.exists == 'true' && 'update (no-traffic)' || 'bootstrap (new service)' }}"
           } >> "$GITHUB_STEP_SUMMARY"
