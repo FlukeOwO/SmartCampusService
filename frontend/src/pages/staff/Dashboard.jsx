@@ -47,7 +47,7 @@ export default function StaffDashboard() {
 
   return (
     <>
-      <PageHeader title="งานที่ต้องทำ" subtitle="ภาพรวมงานค้างและการดำเนินงาน">
+      <PageHeader title="งานที่ต้องทำมีอะไรบ้าง?" subtitle="ภาพรวมงานค้างและการดำเนินงาน">
         <Link to="/staff/requests?status=pending" className="button">
           <i className="fa-solid fa-clock" /> {pendingRequests} คำร้องรอ
         </Link>
