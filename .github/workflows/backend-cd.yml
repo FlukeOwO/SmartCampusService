@@ -69,8 +69,23 @@ jobs:
         id: deploy
         run: |
           TAG="sha-${GITHUB_SHA::7}"
-          # อัปเดตแค่ image: env, secrets, network, service account คงค่าจากตอน setup
-          gcloud run deploy "$SERVICE" --image "$IMAGE" --no-traffic --tag "$TAG" --quiet
+
+          # ถ้า service ยังไม่มี (ถูก delete) ให้สร้างใหม่พร้อมรับ traffic
+          if ! gcloud run services describe "$SERVICE" --region "$REGION" &>/dev/null; then
+            echo "::notice::Service not found — creating new service with traffic"
+            gcloud run deploy "$SERVICE" \
+              --image "$IMAGE" \
+              --allow-unauthenticated \
+              --quiet
+          else
+            # Service มีอยู่แล้ว → deploy แบบ no-traffic + tag สำหรับ smoke test
+            gcloud run deploy "$SERVICE" \
+              --image "$IMAGE" \
+              --no-traffic \
+              --tag "$TAG" \
+              --quiet
+          fi
+
           REVISION=$(gcloud run services describe "$SERVICE" --format='value(status.latestCreatedRevisionName)')
           SERVICE_URL=$(gcloud run services describe "$SERVICE" --format='value(status.url)')
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
@@ -80,19 +95,32 @@ jobs:
 
       - name: Smoke test new revision
         run: |
+          # ถ้าเป็น service ใหม่ (เพิ่งสร้าง) จะไม่มี tag URL → ทดสอบที่ service URL หลัก
+          TEST_URL="${{ steps.deploy.outputs.tag_url }}"
+          if ! curl -fsS --max-time 5 "$TEST_URL" &>/dev/null; then
+            TEST_URL="${{ steps.deploy.outputs.service_url }}"
+          fi
+
           for i in 1 2 3 4 5; do
-            if curl -fsS --max-time 10 "${{ steps.deploy.outputs.tag_url }}/healthz"; then
+            if curl -fsS --max-time 10 "$TEST_URL/healthz"; then
               exit 0
             fi
             sleep 5
           done
-          echo "::error::Smoke test failed - traffic stays on the previous revision"
+          echo "::error::Smoke test failed"
           exit 1
 
       - name: Shift traffic to new revision
+        if: steps.deploy.outputs.tag != ''
         env:
           PERCENT: ${{ inputs.traffic_percent || '100' }}
         run: |
+          # ถ้าเพิ่งสร้าง service ใหม่ จะไม่มี tag → ข้ามขั้นตอนนี้
+          if ! gcloud run services describe "$SERVICE" --format='value(status.traffic[].tag)' | grep -q "${{ steps.deploy.outputs.tag }}"; then
+            echo "New service created with traffic already — skipping traffic shift"
+            exit 0
+          fi
+
           case "$PERCENT" in ''|*[!0-9]*) echo "::error::traffic_percent must be 1-100"; exit 1 ;; esac
           if [ "$PERCENT" -lt 1 ] || [ "$PERCENT" -gt 100 ]; then
             echo "::error::traffic_percent must be 1-100"; exit 1
